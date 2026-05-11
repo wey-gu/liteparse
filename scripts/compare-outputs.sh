@@ -9,7 +9,7 @@ OUTPUT_FILE="comparison-output.txt"
 
 # Run comparison script
 set +e
-npx tsx scripts/compare-dataset.ts "$EXPECTED_DATASET" > "$OUTPUT_FILE" 2>&1
+./scripts/compare-dataset.sh "$EXPECTED_DATASET" > "$OUTPUT_FILE" 2>&1
 EXIT_CODE=$?
 set -e
 
