@@ -18,7 +18,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libtesseract5 \
-    libleptonica6 \
+    liblept5 \
     tesseract-ocr-eng \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
