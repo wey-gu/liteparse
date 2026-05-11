@@ -70,10 +70,10 @@ pub fn image_bounds(
     let page_count = document.page_count();
 
     for page_index in 0..page_count {
-        if let Some(target) = page_num {
-            if page_index as u32 + 1 != target {
-                continue;
-            }
+        if let Some(target) = page_num
+            && page_index as u32 + 1 != target
+        {
+            continue;
         }
 
         let page = document.page(page_index)?;

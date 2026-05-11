@@ -228,10 +228,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for page_index in 0..page_count {
                 let page_number = page_index as u32 + 1;
 
-                if let Some(ref targets) = target_pages {
-                    if !targets.contains(&page_number) {
-                        continue;
-                    }
+                if let Some(ref targets) = target_pages
+                    && !targets.contains(&page_number)
+                {
+                    continue;
                 }
 
                 let output_path = format!("{}/page_{}.png", cmd.output_dir, page_number);

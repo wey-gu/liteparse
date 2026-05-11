@@ -8,7 +8,7 @@ use pdfium::Library;
 /// OCR is triggered when a page has fewer than 100 characters of native text
 /// or has embedded images.
 pub fn ocr_and_merge_pages(
-    pages: &mut Vec<Page>,
+    pages: &mut [Page],
     pdf_path: &str,
     dpi: f32,
     ocr_engine: &dyn OcrEngine,
@@ -152,8 +152,8 @@ fn clean_ocr_table_artifacts(text: &str) -> String {
 
     // Strip leading/trailing border artifact characters: | [ ] ( ) { }
     let without_artifacts: &str = trimmed
-        .trim_start_matches(|c: char| matches!(c, '|' | '[' | ']' | '(' | ')' | '{' | '}'))
-        .trim_end_matches(|c: char| matches!(c, '|' | '[' | ']' | '(' | ')' | '{' | '}'))
+        .trim_start_matches(['|', '[', ']', '(', ')', '{', '}'])
+        .trim_end_matches(['|', '[', ']', '(', ')', '{', '}'])
         .trim();
 
     if without_artifacts.is_empty() {

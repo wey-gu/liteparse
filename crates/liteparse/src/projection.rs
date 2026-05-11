@@ -240,8 +240,8 @@ fn handle_rotation_reading_order(items: &mut [ProjectedTextItem], page_height: f
             }
 
             let global_delta = delta_y + group_max_x + page_height;
-            for other_group_idx in (group_idx + 1)..bbox_groups.len() {
-                for idx in &bbox_groups[other_group_idx] {
+            for other_group in &bbox_groups[(group_idx + 1)..] {
+                for idx in other_group {
                     let rot = canonical_rotation(items[*idx].item.rotation);
                     if rot == 90 || rot == 270 {
                         items[*idx].d += global_delta;
@@ -324,7 +324,7 @@ fn clean_projected_items(items: &mut Vec<ProjectedTextItem>, page_width: f32) {
                 && looks_like_line_number
                 && item.item.width < 15.0);
 
-        !(likely_margin && !line_has_content)
+        !likely_margin || line_has_content
     });
 }
 
@@ -780,10 +780,10 @@ fn merge_nearby_anchor_groups(collection: &mut HashMap<i32, Vec<(usize, usize)>>
             let next_len = collection.get(next_anchor).map(|v| v.len()).unwrap_or(0);
 
             if next_len > current_len {
-                if let Some(cur_items) = collection.remove(anchor) {
-                    if let Some(next_items) = collection.get_mut(next_anchor) {
-                        next_items.extend(cur_items);
-                    }
+                if let Some(cur_items) = collection.remove(anchor)
+                    && let Some(next_items) = collection.get_mut(next_anchor)
+                {
+                    next_items.extend(cur_items);
                 }
                 break;
             } else if let Some(next_items) = collection.remove(next_anchor)
@@ -929,17 +929,13 @@ fn segment_blocks(lines: &[Vec<ProjectedTextItem>]) -> Vec<LineRange> {
 fn extract_block_anchors(
     lines: &[Vec<ProjectedTextItem>],
     block: &LineRange,
-) -> (
-    HashMap<i32, Vec<(usize, usize)>>,
-    HashMap<i32, Vec<(usize, usize)>>,
-    HashMap<i32, Vec<(usize, usize)>>,
-) {
-    let mut anchor_left: HashMap<i32, Vec<(usize, usize)>> = HashMap::new();
-    let mut anchor_right: HashMap<i32, Vec<(usize, usize)>> = HashMap::new();
-    let mut anchor_center: HashMap<i32, Vec<(usize, usize)>> = HashMap::new();
+) -> (AnchorMap, AnchorMap, AnchorMap) {
+    let mut anchor_left: AnchorMap = HashMap::new();
+    let mut anchor_right: AnchorMap = HashMap::new();
+    let mut anchor_center: AnchorMap = HashMap::new();
 
-    for line_idx in block.start..block.end {
-        for (box_idx, bbox) in lines[line_idx].iter().enumerate() {
+    for (line_idx, line_group) in lines.iter().take(block.end).skip(block.start).enumerate() {
+        for (box_idx, bbox) in line_group.iter().enumerate() {
             let left_key = anchor_key(bbox.item.x);
             let right_key = anchor_key(bbox.item.x + bbox.item.width);
             let center_key = anchor_key(bbox.item.x + bbox.item.width * 0.5);
@@ -1134,8 +1130,8 @@ fn try_align_floating(
                 let Some(adj_line_idx) = adj_opt else {
                     continue;
                 };
-                for adj_box_idx in 0..lines[*adj_line_idx].len() {
-                    let cand_key = anchor_key_fn(&lines[*adj_line_idx][adj_box_idx].item);
+                for adj_box in &lines[*adj_line_idx] {
+                    let cand_key = anchor_key_fn(&adj_box.item);
                     if !target.contains_key(&cand_key) {
                         continue;
                     }
@@ -1155,10 +1151,10 @@ fn try_align_floating(
 
     // Apply additions after iteration to avoid borrow conflicts
     for (key, item) in additions {
-        if let Some(members) = target.get_mut(&key) {
-            if !members.contains(&item) {
-                members.push(item);
-            }
+        if let Some(members) = target.get_mut(&key)
+            && !members.contains(&item)
+        {
+            members.push(item);
         }
     }
 }
@@ -1219,8 +1215,7 @@ fn is_flowing_text_block(
     let mut wide_lines = 0usize;
     let mut column_gap_lines = 0usize;
 
-    for i in block.start..block.end {
-        let line = &lines[i];
+    for line in lines.iter().take(block.end).skip(block.start) {
         if line.is_empty() {
             continue;
         }
@@ -1295,9 +1290,9 @@ fn render_flowing_block(
     median_width: f32,
 ) {
     let mut min_x = f32::INFINITY;
-    for i in block.start..block.end {
-        if !lines[i].is_empty() {
-            min_x = min_x.min(lines[i][0].item.x);
+    for line in lines.iter().take(block.end).skip(block.start) {
+        if !line.is_empty() {
+            min_x = min_x.min(line[0].item.x);
         }
     }
     if min_x == f32::INFINITY {
@@ -1331,9 +1326,9 @@ fn detect_and_render_flowing_lines(
 
     // Find block's left margin
     let mut block_min_x = f32::INFINITY;
-    for li in block.start..block.end {
-        if !lines[li].is_empty() {
-            block_min_x = block_min_x.min(lines[li][0].item.x);
+    for line in lines.iter().take(block.end).skip(block.start) {
+        if !line.is_empty() {
+            block_min_x = block_min_x.min(line[0].item.x);
         }
     }
     if block_min_x == f32::INFINITY {
@@ -1343,8 +1338,7 @@ fn detect_and_render_flowing_lines(
     let mut flowing_lines: HashSet<usize> = HashSet::new();
 
     // First pass: detect clearly flowing lines (wide span, no column gaps, enough items)
-    for line_idx in block.start..block.end {
-        let line = &lines[line_idx];
+    for (line_idx, line) in lines.iter().take(block.end).skip(block.start).enumerate() {
         if line.len() < FLOWING_MIN_LINE_ITEMS {
             continue;
         }
@@ -1362,14 +1356,14 @@ fn detect_and_render_flowing_lines(
     }
 
     // Forward sweep: propagate flowing status downward
-    for line_idx in block.start..block.end {
-        if flowing_lines.contains(&line_idx) || lines[line_idx].is_empty() {
+    for (line_idx, line) in lines.iter().take(block.end).skip(block.start).enumerate() {
+        if flowing_lines.contains(&line_idx) || line.is_empty() {
             continue;
         }
-        if line_idx > block.start
+        if line_idx > 0
             && flowing_lines.contains(&(line_idx - 1))
-            && line_max_gap(&lines[line_idx]) < column_gap_threshold
-            && !line_has_column_gap(&lines[line_idx], median_width, page_width)
+            && line_max_gap(line) < column_gap_threshold
+            && !line_has_column_gap(line, median_width, page_width)
         {
             flowing_lines.insert(line_idx);
         }
@@ -1558,17 +1552,17 @@ fn project_to_grid(
         }
 
         // Resolve snap kind (strongest anchor wins; tie-break: left > right > center)
-        for line_idx in block.start..block.end {
-            for box_idx in 0..lines[line_idx].len() {
-                let left_count = meta[line_idx][box_idx]
+        for (line_idx, _line) in lines.iter().take(block.end).skip(block.start).enumerate() {
+            for m in &mut meta[line_idx] {
+                let left_count = m
                     .left_anchor
                     .and_then(|k| anchor_left.get(&k).map(|v| v.len()))
                     .unwrap_or(0);
-                let right_count = meta[line_idx][box_idx]
+                let right_count = m
                     .right_anchor
                     .and_then(|k| anchor_right.get(&k).map(|v| v.len()))
                     .unwrap_or(0);
-                let center_count = meta[line_idx][box_idx]
+                let center_count = m
                     .center_anchor
                     .and_then(|k| anchor_center.get(&k).map(|v| v.len()))
                     .unwrap_or(0);
@@ -1584,7 +1578,7 @@ fn project_to_grid(
                 } else {
                     SnapKind::Center
                 };
-                meta[line_idx][box_idx].snap = Some(kind);
+                m.snap = Some(kind);
             }
         }
 
@@ -1843,21 +1837,15 @@ fn project_to_grid(
 
             // Find items in this block matching the current anchor
             let mut turn_items: Vec<(usize, usize)> = Vec::new();
-            for line_idx in block.start..block.end {
-                for box_idx in 0..lines[line_idx].len() {
-                    if meta[line_idx][box_idx].rendered {
+            for (line_idx, line) in lines.iter().take(block.end).skip(block.start).enumerate() {
+                for (box_idx, m) in meta[line_idx].iter().enumerate().take(line.len()) {
+                    if m.rendered {
                         continue;
                     }
                     let matches = match kind {
-                        SnapKind::Left => {
-                            meta[line_idx][box_idx].left_anchor == Some(current_anchor)
-                        }
-                        SnapKind::Right => {
-                            meta[line_idx][box_idx].right_anchor == Some(current_anchor)
-                        }
-                        SnapKind::Center => {
-                            meta[line_idx][box_idx].center_anchor == Some(current_anchor)
-                        }
+                        SnapKind::Left => m.left_anchor == Some(current_anchor),
+                        SnapKind::Right => m.right_anchor == Some(current_anchor),
+                        SnapKind::Center => m.center_anchor == Some(current_anchor),
                     };
                     if matches {
                         turn_items.push((line_idx, box_idx));

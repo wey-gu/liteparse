@@ -81,21 +81,18 @@ impl OcrEngine for TesseractOcrEngine {
 
         let mut results = Vec::new();
         loop {
-            match iter.get_word_with_bounds() {
-                Ok((text, left, top, right, bottom, confidence)) => {
-                    // tesseract-rs returns confidence 0-100, normalize to 0-1
-                    let conf = confidence / 100.0;
+            if let Ok((text, left, top, right, bottom, confidence)) = iter.get_word_with_bounds() {
+                // tesseract-rs returns confidence 0-100, normalize to 0-1
+                let conf = confidence / 100.0;
 
-                    // Filter low confidence (below 30%, matching TS behavior)
-                    if conf > 0.3 && !text.trim().is_empty() {
-                        results.push(OcrResult {
-                            text,
-                            bbox: [left as f32, top as f32, right as f32, bottom as f32],
-                            confidence: conf,
-                        });
-                    }
+                // Filter low confidence (below 30%, matching TS behavior)
+                if conf > 0.3 && !text.trim().is_empty() {
+                    results.push(OcrResult {
+                        text,
+                        bbox: [left as f32, top as f32, right as f32, bottom as f32],
+                        confidence: conf,
+                    });
                 }
-                Err(_) => {}
             }
 
             match iter.next(TessPageIteratorLevel::RIL_WORD) {
@@ -112,7 +109,7 @@ impl OcrEngine for TesseractOcrEngine {
 fn default_tessdata_dir() -> String {
     #[cfg(target_os = "macos")]
     {
-        if let Some(home) = std::env::var("HOME").ok() {
+        if let Ok(home) = std::env::var("HOME") {
             return format!("{}/Library/Application Support/tesseract-rs/tessdata", home);
         }
     }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Supported output formats for parsed documents.
 /// - `"json"` — Structured JSON with per-page text items, bounding boxes, and metadata.
@@ -110,3 +111,5 @@ pub struct ProjectedTextItem {
     pub rotated: bool,
     pub d: f32,
 }
+
+pub type AnchorMap = HashMap<i32, Vec<(usize, usize)>>;

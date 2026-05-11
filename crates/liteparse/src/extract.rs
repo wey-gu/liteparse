@@ -12,10 +12,10 @@ pub fn extract_pages(
     let mut pages = Vec::new();
 
     for page_index in 0..page_count {
-        if let Some(target_page) = page_num {
-            if page_index as u32 + 1 != target_page {
-                continue;
-            }
+        if let Some(target_page) = page_num
+            && page_index as u32 + 1 != target_page
+        {
+            continue;
         }
 
         let page = document.page(page_index)?;
@@ -54,10 +54,10 @@ pub fn extract_pages_filtered(
     for page_index in 0..page_count {
         let page_number = page_index as u32 + 1;
 
-        if let Some(targets) = target_pages {
-            if !targets.contains(&page_number) {
-                continue;
-            }
+        if let Some(targets) = target_pages
+            && !targets.contains(&page_number)
+        {
+            continue;
         }
 
         if pages.len() >= max_pages {
@@ -508,7 +508,7 @@ impl SegmentBuilder {
 
         // Font object for ascent/descent/glyph widths/buggy detection
         if let Some(obj) = ch.text_object() {
-            if let Some(font) = Font::from_text_object(obj) {
+            if let Some(font) = unsafe { Font::from_text_object(obj) } {
                 if let Some(name) = font.base_name() {
                     let ft = font.font_type();
                     self.font_is_embedded = font.is_embedded();
@@ -571,10 +571,8 @@ impl SegmentBuilder {
                 if let Some(w) = font.glyph_width(ch.unicode(), self.font_size) {
                     self.text_width += w;
                 }
-            } else {
-                if let Some(w) = font.glyph_width_from_char_code(char_code, self.font_size) {
-                    self.text_width += w;
-                }
+            } else if let Some(w) = font.glyph_width_from_char_code(char_code, self.font_size) {
+                self.text_width += w;
             }
         }
 

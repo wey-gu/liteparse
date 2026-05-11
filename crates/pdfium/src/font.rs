@@ -20,7 +20,10 @@ pub enum FontType {
 impl Font {
     /// Create a Font from a text page object handle.
     /// Returns None if the object has no font.
-    pub fn from_text_object(obj: pdfium_sys::FPDF_PAGEOBJECT) -> Option<Self> {
+    ///
+    /// # Safety
+    /// `obj` must be a valid `FPDF_PAGEOBJECT` handle obtained from PDFium.
+    pub unsafe fn from_text_object(obj: pdfium_sys::FPDF_PAGEOBJECT) -> Option<Self> {
         let handle = unsafe { pdfium_sys::FPDFTextObj_GetFont(obj) };
         if handle.is_null() {
             None
