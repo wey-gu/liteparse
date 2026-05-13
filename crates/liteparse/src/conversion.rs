@@ -222,11 +222,16 @@ pub async fn is_path_executable(file_path: &str) -> bool {
             if !meta.is_file() {
                 return false;
             }
-            if std::env::consts::FAMILY == "unix" {
+
+            #[cfg(unix)]
+            {
                 use std::os::unix::fs::PermissionsExt;
-                meta.permissions().mode() & 0o111 != 0
-            } else {
-                true
+                return meta.permissions().mode() & 0o111 != 0;
+            }
+
+            #[cfg(windows)]
+            {
+                return true;
             }
         }
         Err(_) => false,
