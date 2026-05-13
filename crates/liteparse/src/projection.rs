@@ -934,8 +934,8 @@ fn extract_block_anchors(
     let mut anchor_right: AnchorMap = HashMap::new();
     let mut anchor_center: AnchorMap = HashMap::new();
 
-    for (line_idx, line_group) in lines.iter().take(block.end).skip(block.start).enumerate() {
-        for (box_idx, bbox) in line_group.iter().enumerate() {
+    for (line_idx, line) in lines.iter().enumerate().take(block.end).skip(block.start) {
+        for (box_idx, bbox) in line.iter().enumerate() {
             let left_key = anchor_key(bbox.item.x);
             let right_key = anchor_key(bbox.item.x + bbox.item.width);
             let center_key = anchor_key(bbox.item.x + bbox.item.width * 0.5);
@@ -1338,7 +1338,8 @@ fn detect_and_render_flowing_lines(
     let mut flowing_lines: HashSet<usize> = HashSet::new();
 
     // First pass: detect clearly flowing lines (wide span, no column gaps, enough items)
-    for (line_idx, line) in lines.iter().take(block.end).skip(block.start).enumerate() {
+    for line_idx in block.start..block.end {
+        let line = &lines[line_idx];
         if line.len() < FLOWING_MIN_LINE_ITEMS {
             continue;
         }
@@ -1347,7 +1348,29 @@ fn detect_and_render_flowing_lines(
         let line_end = line.last().map(|b| b.item.x + b.item.width).unwrap_or(0.0);
         let line_span = line_end - line_start;
 
-        if line_span > page_width * FLOWING_WIDE_LINE_RATIO
+        // Skip lines where items belong to multiple different snap groups
+        // (e.g., left-column and right-column items on the same line bridged
+        // by a margin line number)
+        let has_mixed_snaps = {
+            let mut first_snap: Option<SnapKind> = None;
+            let mut mixed = false;
+            for m in meta[line_idx].iter() {
+                if let Some(s) = m.snap {
+                    match first_snap {
+                        None => first_snap = Some(s),
+                        Some(fs) if fs != s => {
+                            mixed = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            mixed
+        };
+
+        if !has_mixed_snaps
+            && line_span > page_width * FLOWING_WIDE_LINE_RATIO
             && line_max_gap(line) < column_gap_threshold
             && !line_has_column_gap(line, median_width, page_width)
         {
@@ -1356,11 +1379,30 @@ fn detect_and_render_flowing_lines(
     }
 
     // Forward sweep: propagate flowing status downward
-    for (line_idx, line) in lines.iter().take(block.end).skip(block.start).enumerate() {
+    for line_idx in block.start..block.end {
+        let line = &lines[line_idx];
         if flowing_lines.contains(&line_idx) || line.is_empty() {
             continue;
         }
-        if line_idx > 0
+        let has_mixed_snaps = {
+            let mut first_snap: Option<SnapKind> = None;
+            let mut mixed = false;
+            for m in meta[line_idx].iter() {
+                if let Some(s) = m.snap {
+                    match first_snap {
+                        None => first_snap = Some(s),
+                        Some(fs) if fs != s => {
+                            mixed = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            mixed
+        };
+        if !has_mixed_snaps
+            && line_idx > block.start
             && flowing_lines.contains(&(line_idx - 1))
             && line_max_gap(line) < column_gap_threshold
             && !line_has_column_gap(line, median_width, page_width)
@@ -1374,7 +1416,25 @@ fn detect_and_render_flowing_lines(
         if flowing_lines.contains(&line_idx) || lines[line_idx].is_empty() {
             continue;
         }
-        if line_idx + 1 < block.end
+        let has_mixed_snaps = {
+            let mut first_snap: Option<SnapKind> = None;
+            let mut mixed = false;
+            for m in meta[line_idx].iter() {
+                if let Some(s) = m.snap {
+                    match first_snap {
+                        None => first_snap = Some(s),
+                        Some(fs) if fs != s => {
+                            mixed = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            mixed
+        };
+        if !has_mixed_snaps
+            && line_idx + 1 < block.end
             && flowing_lines.contains(&(line_idx + 1))
             && line_max_gap(&lines[line_idx]) < column_gap_threshold
             && !line_has_column_gap(&lines[line_idx], median_width, page_width)
@@ -1451,6 +1511,15 @@ fn project_to_grid(
     // Step 2: Segment into blocks
     let blocks = segment_blocks(&lines);
 
+    let debug = std::env::var("LITEPARSE_DEBUG").is_ok();
+    if debug {
+        eprintln!("[debug] median_width={median_width:.2}, median_height={median_height:.2}");
+        eprintln!("[debug] {} blocks, {} lines", blocks.len(), lines.len());
+        for (i, b) in blocks.iter().enumerate() {
+            eprintln!("[debug] block {i}: lines {}-{}", b.start, b.end);
+        }
+    }
+
     let mut meta: Vec<Vec<BoxMeta>> = lines
         .iter()
         .map(|line| vec![BoxMeta::default(); line.len()])
@@ -1474,7 +1543,7 @@ fn project_to_grid(
         merge_nearby_anchor_groups(&mut anchor_center);
 
         // Isolation filtering: remove vertically isolated anchor members
-        delta_min_filter(&mut anchor_left, &lines, page.page_height, 0.2);
+        delta_min_filter(&mut anchor_left, &lines, page.page_height, 0.25);
         delta_min_filter(&mut anchor_right, &lines, page.page_height, 0.17);
         delta_min_filter(&mut anchor_center, &lines, page.page_height, 0.05);
 
@@ -1552,8 +1621,8 @@ fn project_to_grid(
         }
 
         // Resolve snap kind (strongest anchor wins; tie-break: left > right > center)
-        for (line_idx, _line) in lines.iter().take(block.end).skip(block.start).enumerate() {
-            for m in &mut meta[line_idx] {
+        for meta_line in meta.iter_mut().take(block.end).skip(block.start) {
+            for m in meta_line {
                 let left_count = m
                     .left_anchor
                     .and_then(|k| anchor_left.get(&k).map(|v| v.len()))
@@ -1571,14 +1640,162 @@ fn project_to_grid(
                     continue;
                 }
 
-                let kind = if left_count >= right_count && left_count >= center_count {
-                    SnapKind::Left
-                } else if right_count >= left_count && right_count >= center_count {
-                    SnapKind::Right
-                } else {
-                    SnapKind::Center
-                };
+                // Prefer left alignment when left and right counts are close.
+                // In justified text, the right margin often collects slightly more
+                // members than the left (due to indented paragraphs breaking the
+                // left margin but keeping the right). A left-bias prevents justified
+                // body text from right-snapping, which causes ragged left margins.
+                let left_biased = left_count > 0
+                    && right_count > 0
+                    && left_count as f64 >= right_count as f64 * 0.8;
+
+                let kind =
+                    if (left_count >= right_count || left_biased) && left_count >= center_count {
+                        SnapKind::Left
+                    } else if right_count >= left_count && right_count >= center_count {
+                        SnapKind::Right
+                    } else {
+                        SnapKind::Center
+                    };
                 m.snap = Some(kind);
+            }
+        }
+
+        // Fixup pass: In justified text columns, most items share both a left
+        // and right anchor. Items that lost their left anchor (e.g., indented
+        // first lines) get right-snapped, but they should render at their
+        // natural position. If a right anchor's members are overwhelmingly
+        // also left-anchored, right-only members are likely justified body text
+        // and should be unsnapped (rendered floating at natural x).
+        //
+        // Additional guard: the item's left x must be near the left x of the
+        // left-anchored members (within half a page width). This prevents
+        // unsnapping items in a different column that happen to share a right margin.
+        {
+            // For each right anchor: (total, has_left, median_left_x of left-anchored members)
+            let mut right_anchor_info: HashMap<i32, (usize, usize, f32)> = HashMap::new();
+            for (anchor_key, members) in &anchor_right {
+                let total = members.len();
+                let mut left_xs: Vec<f32> = Vec::new();
+                let mut has_left = 0usize;
+                for &(li, bi) in members {
+                    if meta[li][bi].left_anchor.is_some() {
+                        has_left += 1;
+                        left_xs.push(lines[li][bi].item.x);
+                    }
+                }
+                left_xs.sort_by(|a, b| a.total_cmp(b));
+                let median_x = if left_xs.is_empty() {
+                    0.0
+                } else {
+                    left_xs[left_xs.len() / 2]
+                };
+                right_anchor_info.insert(*anchor_key, (total, has_left, median_x));
+            }
+
+            for line_idx in block.start..block.end {
+                for (box_idx, m) in meta[line_idx].iter_mut().enumerate() {
+                    if m.snap != Some(SnapKind::Right) {
+                        continue;
+                    }
+                    // Only fix items with no left anchor
+                    if m.left_anchor.is_some() {
+                        continue;
+                    }
+                    let Some(right_key) = m.right_anchor else {
+                        continue;
+                    };
+                    let (total, has_left, median_left_x) = right_anchor_info
+                        .get(&right_key)
+                        .copied()
+                        .unwrap_or((0, 0, 0.0));
+                    // Require overwhelming majority (90%+) of members to have left anchors
+                    if total < 10 || (has_left as f64 / total as f64) < 0.9 {
+                        continue;
+                    }
+                    // Check that the item is near the same column as the left-anchored members
+                    let item_x = lines[line_idx][box_idx].item.x;
+                    let x_distance = (item_x - median_left_x).abs();
+                    if x_distance > page.page_width * 0.25 {
+                        continue;
+                    }
+                    if debug {
+                        let preview: String = lines[line_idx]
+                            .get(box_idx)
+                            .map(|t| t.item.text.chars().take(30).collect())
+                            .unwrap_or_default();
+                        eprintln!(
+                            "[debug] FIXUP unsnap: line={} right_anchor={} total={} has_left={} median_x={:.1} item_x={:.1} text='{}'",
+                            line_idx, right_key, total, has_left, median_left_x, item_x, preview
+                        );
+                    }
+                    m.snap = None;
+                    m.right_anchor = None;
+                }
+            }
+        }
+
+        // Symmetric fixup: In multi-column layouts, short right-column lines
+        // may only have a left anchor (no right anchor) because their right
+        // edge doesn't align with full-width lines. Meanwhile, the full-width
+        // lines in the same left anchor group get right-snapped. The short
+        // lines get left-snapped and placed too far left.
+        //
+        // Detection: if a left anchor has many right-snapped members AND the
+        // anchor position is past the page midpoint (indicating right column),
+        // unsnap the remaining left-only members so they float and inherit
+        // correct positioning from forward anchors.
+        {
+            let page_mid_key = anchor_key(page.page_width * 0.4);
+
+            let mut left_anchor_info: HashMap<i32, (usize, usize)> = HashMap::new();
+            for (left_ak, members) in &anchor_left {
+                let total = members.len();
+                let mut right_snapped = 0usize;
+                for &(li, bi) in members {
+                    if meta[li][bi].snap == Some(SnapKind::Right) {
+                        right_snapped += 1;
+                    }
+                }
+                left_anchor_info.insert(*left_ak, (total, right_snapped));
+            }
+
+            for line_idx in block.start..block.end {
+                for (box_idx, m) in meta[line_idx].iter_mut().enumerate() {
+                    if m.snap != Some(SnapKind::Left) {
+                        continue;
+                    }
+                    // Only fix items with no right anchor (short lines)
+                    if m.right_anchor.is_some() {
+                        continue;
+                    }
+                    let Some(left_key) = m.left_anchor else {
+                        continue;
+                    };
+                    // Only apply to items past the page midpoint (right column)
+                    if left_key < page_mid_key {
+                        continue;
+                    }
+                    let (total, right_snapped) =
+                        left_anchor_info.get(&left_key).copied().unwrap_or((0, 0));
+                    // Require a meaningful group where most members are right-snapped
+                    if total < 4 || (right_snapped as f64 / total as f64) < 0.5 {
+                        continue;
+                    }
+                    if debug {
+                        let preview: String = lines[line_idx]
+                            .get(box_idx)
+                            .map(|t| t.item.text.chars().take(30).collect())
+                            .unwrap_or_default();
+                        eprintln!(
+                            "[debug] FIXUP left-unsnap: line={} left_anchor={} total={} right_snapped={} text='{}'",
+                            line_idx, left_key, total, right_snapped, preview
+                        );
+                    }
+                    m.snap = None;
+                    m.left_anchor = None;
+                    m.force_unsnapped = true;
+                }
             }
         }
 
@@ -1701,6 +1918,16 @@ fn project_to_grid(
                         {
                             continue;
                         }
+                    } else {
+                        // Force-unsnapped items (e.g. short right-column lines)
+                        // must wait until ALL snaps are processed so that forward
+                        // anchors from their column neighbors are established.
+                        if !left_snaps.is_empty()
+                            || !right_snaps.is_empty()
+                            || !center_snaps.is_empty()
+                        {
+                            continue;
+                        }
                     }
 
                     if !can_render_bbox(&meta[line_idx], box_idx) {
@@ -1740,6 +1967,20 @@ fn project_to_grid(
                                 target_x = adjusted;
                             }
                         }
+                    }
+
+                    if debug && bbox_text.contains("Translation") {
+                        eprintln!(
+                            "[debug] FLOATING render '{bbox_text:.30}' line={line_idx} target_x={target_x} last_snap_left={} raw_len={} should_space={}",
+                            forward_left
+                                .range(..=anchor_key(bbox_x))
+                                .map(|(_, v)| *v)
+                                .max()
+                                .unwrap_or(0),
+                            raw_lines[line_idx].len(),
+                            meta[line_idx][box_idx].should_space
+                        );
+                        eprintln!("[debug]   raw_line so far: '{}'", &raw_lines[line_idx]);
                     }
 
                     trim_end_in_place(&mut raw_lines[line_idx]);
@@ -1837,15 +2078,29 @@ fn project_to_grid(
 
             // Find items in this block matching the current anchor
             let mut turn_items: Vec<(usize, usize)> = Vec::new();
-            for (line_idx, line) in lines.iter().take(block.end).skip(block.start).enumerate() {
-                for (box_idx, m) in meta[line_idx].iter().enumerate().take(line.len()) {
+            for line_idx in block.start..block.end {
+                for (box_idx, m) in meta[line_idx]
+                    .iter()
+                    .enumerate()
+                    .take(lines[line_idx].len())
+                {
                     if m.rendered {
                         continue;
                     }
                     let matches = match kind {
-                        SnapKind::Left => m.left_anchor == Some(current_anchor),
-                        SnapKind::Right => m.right_anchor == Some(current_anchor),
-                        SnapKind::Center => m.center_anchor == Some(current_anchor),
+                        SnapKind::Left => {
+                            m.left_anchor == Some(current_anchor)
+                                && m.snap != Some(SnapKind::Right)
+                                && m.snap != Some(SnapKind::Center)
+                        }
+                        SnapKind::Right => {
+                            m.right_anchor == Some(current_anchor)
+                                && m.snap == Some(SnapKind::Right)
+                        }
+                        SnapKind::Center => {
+                            m.center_anchor == Some(current_anchor)
+                                && m.snap == Some(SnapKind::Center)
+                        }
                     };
                     if matches {
                         turn_items.push((line_idx, box_idx));
@@ -1935,6 +2190,23 @@ fn project_to_grid(
                     }
                     forward_center.insert(current_anchor, target_x);
                 }
+            }
+
+            if debug {
+                let sample_text: Vec<String> = turn_items
+                    .iter()
+                    .take(2)
+                    .map(|(li, bi)| {
+                        let t = &lines[*li][*bi].item.text;
+                        format!("'{:.30}'", t)
+                    })
+                    .collect();
+                eprintln!(
+                    "[debug] SNAP {:?} anchor={current_anchor} target_x={target_x} line_max={line_max} items={} samples={}",
+                    kind,
+                    turn_items.len(),
+                    sample_text.join(", ")
+                );
             }
 
             for (line_idx, box_idx) in turn_items {

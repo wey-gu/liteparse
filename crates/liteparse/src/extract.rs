@@ -94,6 +94,58 @@ pub fn extract(pdf_path: &str, page_num: Option<u32>) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Check if the page has any visible (non-render-mode-3) printable characters.
+/// Used to decide whether to skip invisible text or use it (OCR text layers).
+/// Determine whether invisible (render mode 3) characters should be skipped.
+///
+/// Returns true only when the page has a clear mix of visible and invisible
+/// text with the visible portion dominating — this indicates the invisible
+/// text is likely a redundant OCR layer over a native-text PDF.
+///
+/// When invisible text is the majority, or the only text on the page,
+/// returns false so we keep it (it IS the content, e.g. scanned PDFs with
+/// an OCR text layer and no native text).
+fn should_skip_invisible(text_page: &TextPage, char_count: i32) -> bool {
+    let mut visible = 0u32;
+    let mut invisible = 0u32;
+
+    for i in 0..char_count {
+        let Some(ch) = text_page.char_at(i) else {
+            continue;
+        };
+        let unicode = ch.unicode();
+        if unicode == 0 || unicode == 0xFFFE || unicode == 0xFFFF {
+            continue;
+        }
+        if let Some(c) = char::from_u32(unicode)
+            && (c.is_whitespace() || c.is_control())
+        {
+            continue;
+        }
+        if ch.is_generated() {
+            continue;
+        }
+        if ch.text_render_mode() == Some(3) {
+            invisible += 1;
+        } else {
+            visible += 1;
+        }
+    }
+
+    // Only skip invisible text when visible text clearly dominates.
+    // If invisible text is a significant portion (>30% of all text),
+    // keep it — the page likely has mixed content where both matter.
+    if visible == 0 {
+        return false; // All invisible → keep it
+    }
+    if invisible == 0 {
+        return false; // No invisible text to skip
+    }
+    let total = visible + invisible;
+    let invisible_ratio = invisible as f64 / total as f64;
+    invisible_ratio < 0.3
+}
+
 /// Character-level text extraction.
 ///
 /// Instead of using PDFium's rect API (which splits text at every font attribute
@@ -119,6 +171,11 @@ fn extract_page_text_items(
     // Hard limit: gaps larger than this always cause a split (column breaks).
     const MAX_INLINE_GAP: f32 = 15.0;
 
+    // Pre-scan: check if ALL text on this page is invisible (render mode 3).
+    // Some scanned PDFs have an invisible OCR text layer as the only text.
+    // In that case we should use the invisible text rather than skipping it.
+    let skip_invisible = should_skip_invisible(text_page, char_count);
+
     let page_rotation = page.rotation();
     let mut items: Vec<TextItem> = Vec::new();
     let mut seg = SegmentBuilder::new();
@@ -135,9 +192,9 @@ fn extract_page_text_items(
             continue;
         }
 
-        // Skip invisible text (render mode 3 = invisible).
-        // Some PDFs have hidden text layers (e.g. old branding under new branding).
-        if ch.text_render_mode() == Some(3) {
+        // Skip invisible text (render mode 3) only when the page also has visible text.
+        // If all text is invisible, it's likely an OCR text layer and we should keep it.
+        if skip_invisible && ch.text_render_mode() == Some(3) {
             continue;
         }
 
@@ -206,14 +263,20 @@ fn extract_page_text_items(
 
             let gap = vp_strict.left - seg.last_char_right;
 
-            // Detect line change using two complementary checks:
+            // Detect line change using complementary checks:
             // 1. Strict vertical separation: char's strict top is well below last char's strict bottom
             // 2. Line wrap: char goes back leftward AND strict top is below last char's strict bottom
             //    (even slightly), indicating text wrapped to a new line within the same text object
+            // 3. Very large leftward jump: if the char jumps back by more than the current
+            //    segment width, it's definitely a new line (handles OCR text with tall bounding
+            //    boxes that overlap vertically between lines)
             let strict_below = vp_strict.top > seg.last_char_bottom;
             let large_leftward_jump = gap < -5.0;
+            let seg_width = seg.vp_right - seg.vp_left;
+            let very_large_leftward_jump = seg_width > 20.0 && gap < -(seg_width * 0.5);
             let line_changed = vp_strict.top > seg.last_char_bottom + y_tolerance
-                || (strict_below && large_leftward_jump);
+                || (strict_below && large_leftward_jump)
+                || very_large_leftward_jump;
 
             // Dot leader detection: break at the boundary between dots and non-dots.
             // This prevents items like "Total . . . . 330,100" from merging.
@@ -234,7 +297,7 @@ fn extract_page_text_items(
                 seg.append_ligature_tail(ligature_tail);
             } else if seg.pending_space {
                 let avg_cw = seg.avg_char_width();
-                if gap > avg_cw * 1.6 {
+                if gap > avg_cw * 2.2 {
                     seg.flush(&mut items);
                     seg.start(c, &vp_loose, &vp_strict, &ch, page_rotation);
                     seg.append_ligature_tail(ligature_tail);
