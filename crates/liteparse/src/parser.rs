@@ -3,6 +3,7 @@ use crate::conversion;
 use crate::extract;
 use crate::ocr::OcrEngine;
 use crate::ocr::http_simple::HttpOcrEngine;
+#[cfg(feature = "tesseract")]
 use crate::ocr::tesseract::TesseractOcrEngine;
 use crate::ocr_merge;
 use crate::output::{json, text};
@@ -71,12 +72,17 @@ impl LiteParse {
 
         // OCR pass
         if self.config.ocr_enabled {
-            let engine: Box<dyn OcrEngine> = if self.config.ocr_server_url.is_none() {
-                Box::new(TesseractOcrEngine::new(self.config.tessdata_path.clone()))
+            let engine: Box<dyn OcrEngine> = if let Some(ref url) = self.config.ocr_server_url {
+                Box::new(HttpOcrEngine::new(url.clone()))
             } else {
-                Box::new(HttpOcrEngine::new(
-                    self.config.ocr_server_url.clone().unwrap(),
-                ))
+                #[cfg(feature = "tesseract")]
+                {
+                    Box::new(TesseractOcrEngine::new(self.config.tessdata_path.clone()))
+                }
+                #[cfg(not(feature = "tesseract"))]
+                {
+                    return Err("OCR enabled but no --ocr-server-url provided and tesseract feature is disabled".into());
+                }
             };
             ocr_merge::ocr_and_merge_pages(
                 &mut pages,

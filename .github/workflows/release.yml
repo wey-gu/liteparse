@@ -32,9 +32,9 @@ jobs:
 
       - name: Publish to crates.io
         run: |
-          cargo publish -p pdfium-sys --allow-dirty
-          cargo publish -p pdfium --allow-dirty
-          cargo publish -p liteparse-rs --allow-dirty
+          cargo publish -p liteparse-pdfium-sys --allow-dirty
+          cargo publish -p liteparse-pdfium --allow-dirty
+          cargo publish -p liteparse --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

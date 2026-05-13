@@ -1164,21 +1164,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "liteparse-rs"
-version = "0.1.0"
+name = "liteparse"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "clap",
  "image",
  "infer",
- "pdfium",
- "pdfium-sys",
+ "liteparse-pdfium",
+ "liteparse-pdfium-sys",
  "reqwest 0.13.3",
  "serde",
  "serde_json",
  "tempfile",
  "tesseract-rs",
  "tokio",
+]
+
+[[package]]
+name = "liteparse-pdfium"
+version = "1.0.0"
+dependencies = [
+ "liteparse-pdfium-sys",
+]
+
+[[package]]
+name = "liteparse-pdfium-sys"
+version = "1.0.0"
+dependencies = [
+ "bindgen",
+ "flate2",
+ "tar",
+ "ureq",
 ]
 
 [[package]]
@@ -1410,23 +1427,6 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest",
  "hmac",
-]
-
-[[package]]
-name = "pdfium"
-version = "0.1.0"
-dependencies = [
- "pdfium-sys",
-]
-
-[[package]]
-name = "pdfium-sys"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "flate2",
- "tar",
- "ureq",
 ]
 
 [[package]]

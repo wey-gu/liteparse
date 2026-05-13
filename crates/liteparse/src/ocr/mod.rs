@@ -1,4 +1,5 @@
 pub mod http_simple;
+#[cfg(feature = "tesseract")]
 pub mod tesseract;
 
 /// A single word-level OCR result with bounding box and confidence.
