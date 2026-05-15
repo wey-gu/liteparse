@@ -249,6 +249,7 @@ fn run_bindgen(include_dir: &Path) {
             .allowlist_var("FPDF.*")
             .derive_debug(true)
             .derive_default(true)
+            .layout_tests(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate bindings");

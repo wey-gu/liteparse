@@ -96,7 +96,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: >-
+            --release --out dist --find-interpreter
+            ${{ matrix.target == 'aarch64-unknown-linux-gnu' && '--no-default-features' || '' }}
           manylinux: 2_28
           working-directory: packages/python
           before-script-linux: |
@@ -112,6 +114,8 @@ jobs:
         if: runner.os != 'Windows'
         working-directory: packages/python
         run: |
+          # Fix permissions from Docker/maturin build
+          sudo chmod -R a+rw dist/ || true
           # Find pdfium in target/ (mounted from Docker) or cache
           PDFIUM_LIB=$(find ../../target -name "libpdfium.so" -type f 2>/dev/null | head -1 || true)
           if [ -z "$PDFIUM_LIB" ]; then
