@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from liteparse._liteparse import LiteParse as _NativeLiteParse
+from liteparse._liteparse import search_items as _native_search_items
 
 from .types import (
     ParsedPage,
@@ -192,3 +193,40 @@ class LiteParse:
 
     def __repr__(self) -> str:
         return "LiteParse()"
+
+
+def search_items(
+    items: List[TextItem],
+    phrase: str,
+    *,
+    case_sensitive: bool = False,
+) -> List[TextItem]:
+    """
+    Search text items for phrase matches, returning merged items with combined bounding boxes.
+
+    A phrase may span multiple adjacent text items. This function concatenates
+    consecutive items, finds matches, and returns synthetic merged TextItem
+    objects with combined bounding boxes.
+
+    Args:
+        items: List of TextItem objects to search through.
+        phrase: The phrase to search for.
+        case_sensitive: Whether the search should be case-sensitive (default: False).
+
+    Returns:
+        List of TextItem objects representing the matched regions.
+    """
+    native_results = _native_search_items(items, phrase, case_sensitive=case_sensitive)
+    return [
+        TextItem(
+            text=item.text,
+            x=item.x,
+            y=item.y,
+            width=item.width,
+            height=item.height,
+            font_name=item.font_name,
+            font_size=item.font_size,
+            confidence=item.confidence,
+        )
+        for item in native_results
+    ]

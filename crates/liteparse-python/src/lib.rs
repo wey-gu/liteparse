@@ -42,6 +42,20 @@ impl PyTextItem {
 }
 
 impl PyTextItem {
+    fn to_rust(&self) -> liteparse::types::TextItem {
+        liteparse::types::TextItem {
+            text: self.text.clone(),
+            x: self.x as f32,
+            y: self.y as f32,
+            width: self.width as f32,
+            height: self.height as f32,
+            font_name: self.font_name.clone(),
+            font_size: self.font_size.map(|v| v as f32),
+            confidence: self.confidence.map(|v| v as f32),
+            ..Default::default()
+        }
+    }
+
     fn from_rust(item: &liteparse::types::TextItem) -> Self {
         Self {
             text: item.text.clone(),
@@ -347,6 +361,21 @@ impl LiteParse {
 // Module
 // ---------------------------------------------------------------------------
 
+/// Search text items for phrase matches, returning merged items with combined bounding boxes.
+#[pyfunction]
+#[pyo3(signature = (items, phrase, *, case_sensitive = false))]
+fn search_items(items: Vec<PyTextItem>, phrase: String, case_sensitive: bool) -> Vec<PyTextItem> {
+    let rust_items: Vec<_> = items.iter().map(|i| i.to_rust()).collect();
+    let options = liteparse::search::SearchOptions {
+        phrase,
+        case_sensitive,
+    };
+    liteparse::search::search_items(&rust_items, &options)
+        .iter()
+        .map(PyTextItem::from_rust)
+        .collect()
+}
+
 /// Run the `lit` CLI with the given arguments.
 #[pyfunction]
 fn run_cli(args: Vec<String>) -> PyResult<()> {
@@ -361,5 +390,6 @@ fn _liteparse(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTextItem>()?;
     m.add_class::<PyScreenshotResult>()?;
     m.add_function(wrap_pyfunction!(run_cli, m)?)?;
+    m.add_function(wrap_pyfunction!(search_items, m)?)?;
     Ok(())
 }

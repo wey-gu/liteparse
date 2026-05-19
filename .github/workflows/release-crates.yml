@@ -171,18 +171,3 @@ jobs:
           echo "Would release crates-v${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "Artifacts:" >> $GITHUB_STEP_SUMMARY
           find artifacts -name "*.tar.gz" -exec echo "- {}" \; >> $GITHUB_STEP_SUMMARY
-
-  dispatch-homebrew:
-    needs: github-release
-    if: ${{ !inputs.dry-run }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'homebrew_release.yml',
-              ref: 'main',
-            })

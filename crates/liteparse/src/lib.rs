@@ -10,4 +10,5 @@ pub mod parser;
 pub mod projection;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod render;
+pub mod search;
 pub mod types;

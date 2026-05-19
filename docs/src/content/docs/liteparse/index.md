@@ -5,22 +5,25 @@ sidebar:
   order: 0
 ---
 
-LiteParse is an open-source document parsing library that parses text with spatial layout information and bounding boxes. It runs entirely on your machine, with no cloud dependencies, no LLMs, no API keys.
+LiteParse is an open-source document parsing library that parses text with spatial layout information and bounding boxes. Written in Rust for speed and reliability, it runs entirely on your machine with no cloud dependencies, no LLMs, and no API keys.
 
 LiteParse is designed specifically for use cases that require fast, accurate text parsing: real-time applications, coding agents, and local workflows. It provides a simple CLI and library API for parsing PDFs, Office documents, and images, with built-in OCR support.
+
+<img src="https://github.com/user-attachments/assets/07ba6a82-6bb1-4dea-b0ef-cad7df7d1622" alt="out">
 
 ## What can LiteParse do?
 
 - **Parse PDFs** with precise spatial layout. Text comes back positioned where it appears on the page
 - **Extract bounding boxes** for every text line, ready for downstream processing or visualization
-- **OCR scanned documents** using built-in Tesseract.js or plug in your own OCR server
+- **OCR scanned documents** using built-in Tesseract or plug in your own OCR server
 - **Parse Office files and images** with support for DOCX, XLSX, PPTX, PNG, JPG, and more via automatic conversion
 - **Screenshot PDF pages** as high-quality images for LLM-based workflows
-- **Use from TypeScript, Python, or the CLI** — whatever fits your stack
+- **Use from Node.js/TypeScript, Python, Rust, or the browser (WASM)** — whatever fits your stack
 
 ## Get started
 
 - [Getting started](/liteparse/getting_started/): Install LiteParse and parse your first document.
 - [Library usage](/liteparse/guides/library-usage/): Use LiteParse from TypeScript or Python code.
+- [Browser usage (WASM)](/liteparse/guides/browser-usage/): Run LiteParse in the browser with zero server dependencies.
 - [CLI reference](/liteparse/cli-reference/): Complete command and option reference.
-- [API reference](/liteparse/api/): TypeScript library types and methods.
+- [API reference](/liteparse/api/): Detailed API documentation (rust) for all public types and functions. The same types apply across all language bindings.

@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-LiteParse provides the `lit` CLI with three commands: `parse`, `batch-parse`, and `screenshot`.
+LiteParse provides the `lit` CLI with three commands: `parse`, `batch-parse`, and `screenshot`. The CLI is the same whether installed via `npm`, `pip`, or built from Rust source.
 
 ## `lit parse`
 
@@ -27,17 +27,16 @@ lit parse [options] <file>
 |--------|-------------|---------|
 | `-o, --output <file>` | Write output to a file instead of stdout | — |
 | `--format <format>` | Output format: `json` or `text` | `text` |
-| `--ocr-server-url <url>` | HTTP OCR server URL | — (uses Tesseract) |
 | `--no-ocr` | Disable OCR entirely | — |
-| `--ocr-language <lang>` | OCR language code | `en` |
+| `--ocr-language <lang>` | OCR language code (Tesseract format) | `eng` |
+| `--ocr-server-url <url>` | HTTP OCR server URL | — (uses Tesseract) |
+| `--tessdata-path <path>` | Path to tessdata directory | — (uses `TESSDATA_PREFIX` env var) |
 | `--num-workers <n>` | Pages to OCR in parallel | CPU cores - 1 |
-| `--max-pages <n>` | Maximum pages to parse | `10000` |
+| `--max-pages <n>` | Maximum pages to parse | `1000` |
 | `--target-pages <pages>` | Pages to parse (e.g., `"1-5,10"`) | — (all pages) |
 | `--dpi <dpi>` | Rendering DPI | `150` |
-| `--no-precise-bbox` | **Deprecated:** Disable populating the output boundingBoxes array. Will be removed in v2.0. Text item coordinates (`x`, `y`, `width`, `height`) are always present regardless. | — |
 | `--preserve-small-text` | Keep very small text | — |
 | `--password <password>` | Password for encrypted/protected documents | — |
-| `--config <file>` | JSON config file path | — |
 | `-q, --quiet` | Suppress progress output | — |
 
 ### Examples
@@ -87,17 +86,16 @@ lit batch-parse [options] <input-dir> <output-dir>
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--format <format>` | Output format: `json` or `text` | `text` |
-| `--ocr-server-url <url>` | HTTP OCR server URL | — (uses Tesseract) |
 | `--no-ocr` | Disable OCR entirely | — |
-| `--ocr-language <lang>` | OCR language code | `en` |
+| `--ocr-language <lang>` | OCR language code | `eng` |
+| `--ocr-server-url <url>` | HTTP OCR server URL | — (uses Tesseract) |
+| `--tessdata-path <path>` | Path to tessdata directory | — |
 | `--num-workers <n>` | Pages to OCR in parallel | CPU cores - 1 |
-| `--max-pages <n>` | Maximum pages per file | `10000` |
+| `--max-pages <n>` | Maximum pages per file | `1000` |
 | `--dpi <dpi>` | Rendering DPI | `150` |
-| `--no-precise-bbox` | **Deprecated:** Disable populating the output boundingBoxes array. Will be removed in v2.0. Text item coordinates (`x`, `y`, `width`, `height`) are always present regardless. | — |
 | `--recursive` | Search subdirectories | — |
 | `--extension <ext>` | Only process this extension (e.g., `".pdf"`) | — (all supported) |
 | `--password <password>` | Password for encrypted/protected documents (applied to all files) | — |
-| `--config <file>` | JSON config file path | — |
 | `-q, --quiet` | Suppress progress output | — |
 
 ### Examples
@@ -111,9 +109,6 @@ lit batch-parse ./documents ./output --recursive --extension ".pdf"
 
 # Batch parse with JSON output and no OCR
 lit batch-parse ./documents ./output --format json --no-ocr
-
-# Use a config file for consistent settings
-lit batch-parse ./documents ./output --config liteparse.config.json
 ```
 
 ---
@@ -139,9 +134,7 @@ lit screenshot [options] <file>
 | `-o, --output-dir <dir>` | Output directory | `./screenshots` |
 | `--target-pages <pages>` | Pages to screenshot (e.g., `"1,3,5"` or `"1-5"`) | — (all pages) |
 | `--dpi <dpi>` | Rendering DPI | `150` |
-| `--format <format>` | Image format: `png` or `jpg` | `png` |
 | `--password <password>` | Password for encrypted/protected documents | — |
-| `--config <file>` | JSON config file path | — |
 | `-q, --quiet` | Suppress progress output | — |
 
 ### Examples
@@ -151,13 +144,10 @@ lit screenshot [options] <file>
 lit screenshot document.pdf -o ./pages
 
 # First 5 pages at high DPI
-lit screenshot document.pdf --pages "1-5" --dpi 300 -o ./pages
-
-# JPG format for smaller files
-lit screenshot document.pdf --format jpg -o ./pages
+lit screenshot document.pdf --target-pages "1-5" --dpi 300 -o ./pages
 
 # Specific pages only
-lit screenshot document.pdf --pages "1,5,10" -o ./pages
+lit screenshot document.pdf --target-pages "1,5,10" -o ./pages
 ```
 
 ---

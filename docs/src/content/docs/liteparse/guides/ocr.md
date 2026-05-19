@@ -9,13 +9,11 @@ LiteParse uses OCR selectively — only on embedded images or pages where native
 
 ## Built-in Tesseract (default)
 
-Tesseract.js is bundled with LiteParse. The only setup is the automatic download of the Tesseract model files on first use. Just run:
+Tesseract is bundled with LiteParse and works out of the box. Just run:
 
 ```bash
 lit parse document.pdf
 ```
-
-If bundling LiteParse into a docker container or server environment, you might want to pre-download the Tesseract files to avoid network calls at runtime with the above command or similar.
 
 ### Language support
 
@@ -28,6 +26,21 @@ lit parse document.pdf --ocr-language jpn    # Japanese
 ```
 
 Tesseract uses [ISO 639-3](https://tesseract-ocr.github.io/tessdoc/Data-Files-in-different-versions.html) language codes (`eng`, `fra`, `deu`, etc.).
+
+### Offline / air-gapped environments
+
+For environments without internet access, point Tesseract at a local directory containing pre-downloaded `.traineddata` files:
+
+```bash
+# Via environment variable
+export TESSDATA_PREFIX=/path/to/tessdata
+lit parse document.pdf --ocr-language eng
+
+# Or via CLI flag
+lit parse document.pdf --tessdata-path /path/to/tessdata
+```
+
+The `tessdata_path` / `tessdataPath` option is also available in the library APIs.
 
 ### Disabling OCR
 
@@ -136,10 +149,14 @@ lit parse document.pdf --ocr-server-url http://localhost:8080/ocr
 - Results should be in reading order (top-to-bottom, left-to-right)
 - Cache OCR models in memory rather than reloading per request
 
+## OCR in the browser (WASM)
+
+The built-in Tesseract and HTTP OCR backends are not available in the WASM build. Instead, you can pass a custom `ocrEngine` object with a `recognize` method. See the [browser usage guide](/liteparse/guides/browser-usage/) for details.
+
 ### A note on OCR approaches
 
-These days, its common to apply the term "OCR" to both traditional approaches and newer LLM-based document understanding models. 
+These days, its common to apply the term "OCR" to both traditional approaches and newer LLM-based document understanding models.
 
-The LiteParse OCR API is designed specifically for approaches that return text with bounding boxes. 
+The LiteParse OCR API is designed specifically for approaches that return text with bounding boxes.
 
 If you are trying to integrate a method that doesn't return bounding boxes, you will have to generate dummy bounding boxes.

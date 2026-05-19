@@ -121,6 +121,20 @@ pub struct JsTextItem {
 }
 
 impl JsTextItem {
+    pub fn to_rust(&self) -> TextItem {
+        TextItem {
+            text: self.text.clone(),
+            x: self.x as f32,
+            y: self.y as f32,
+            width: self.width as f32,
+            height: self.height as f32,
+            font_name: self.font_name.clone(),
+            font_size: self.font_size.map(|v| v as f32),
+            confidence: self.confidence.map(|v| v as f32),
+            ..Default::default()
+        }
+    }
+
     pub fn from_rust(item: &TextItem) -> Self {
         Self {
             text: item.text.clone(),

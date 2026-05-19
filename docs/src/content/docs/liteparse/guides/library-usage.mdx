@@ -5,9 +5,13 @@ sidebar:
   order: 1
 ---
 
-LiteParse can be used as a library in your own code, not just from the CLI. There are packages for both TypeScript and Python.
+LiteParse can be used as a library in your own code, not just from the CLI. There are native packages for both TypeScript and Python.
 
-## TypeScript
+
+<Tabs>
+<TabItem label="TypeScript" value="typescript">
+
+## TypeScript / Node.js usage
 
 Install as a project dependency:
 
@@ -36,13 +40,15 @@ for (const page of result.pages) {
 
 ### JSON output with bounding boxes
 
+Text items include spatial coordinates (`x`, `y`, `width`, `height`) in PDF points:
+
 ```typescript
 const parser = new LiteParse({ outputFormat: "json" });
 const result = await parser.parse("document.pdf");
 
-for (const page of result.json?.pages || []) {
+for (const page of result.pages) {
   for (const item of page.textItems) {
-    console.log(`[${item.x}, ${item.y}] → [${item.x + item.width}, ${item.y + item.height}] ${item.text}`);
+    console.log(`[${item.x}, ${item.y}] ${item.width}×${item.height} "${item.text}"`);
   }
 }
 ```
@@ -59,13 +65,13 @@ const parser = new LiteParse({
   dpi: 300,
   outputFormat: "json",
   targetPages: "1-10",
-  password: "secret",        // for encrypted/protected documents
+  password: "secret",
 });
 ```
 
 ### Buffer / Uint8Array input
 
-You can pass raw bytes directly instead of a file path. PDF buffers are parsed with **zero disk I/O** — no temp files are written:
+You can pass raw bytes directly instead of a file path:
 
 ```typescript
 import { readFile } from "fs/promises";
@@ -82,24 +88,21 @@ const buffer = Buffer.from(await response.arrayBuffer());
 const result2 = await parser.parse(buffer);
 ```
 
-Non-PDF buffers (images, Office documents) are written to a temp directory for format conversion. You can control the temp directory with the `LITEPARSE_TMPDIR` environment variable.
-
 ### Screenshots
 
-Generate page images as buffers — useful for sending to LLMs or saving to disk. Accepts file paths, `Buffer`, or `Uint8Array`:
+Generate page images as buffers — useful for sending to LLMs or saving to disk:
 
 ```typescript
 const parser = new LiteParse();
-const screenshots = await parser.screenshot("document.pdf");
+const screenshots = parser.screenshot("document.pdf");
 
 for (const shot of screenshots) {
   console.log(`Page ${shot.pageNum}: ${shot.width}x${shot.height}`);
-  // shot.imageBuffer contains the raw PNG/JPG data
+  // shot.imageBuffer contains the raw PNG data
 }
 
-// Also works with buffer input
-const pdfBytes = await readFile("document.pdf");
-const shots = await parser.screenshot(pdfBytes, [1, 2, 3]);
+// Screenshot specific pages
+const shots = parser.screenshot("document.pdf", [1, 2, 3]);
 ```
 
 ### Environment variables
@@ -107,33 +110,17 @@ const shots = await parser.screenshot(pdfBytes, [1, 2, 3]);
 | Variable | Description |
 |----------|-------------|
 | `TESSDATA_PREFIX` | Path to a directory containing Tesseract `.traineddata` files. For offline/air-gapped environments. Also available as the `tessdataPath` config option. |
-| `LITEPARSE_TMPDIR` | Override the temp directory for format conversion. Defaults to `os.tmpdir()`. |
 
-See the [API reference](/liteparse/api/) for full type details.
+</TabItem>
+<TabItem label="Python" value="python">
 
----
+## Python usage
 
-## Python
-
-The Python package is a wrapper around the LiteParse Node.js CLI. **Node.js (>= 18) must be installed** on your system.
-
-### Installation
-
-First, install the LiteParse CLI:
-
-```bash
-npm install -g @llamaindex/liteparse
-```
-
-Then install the Python package:
+Install the package from PyPI:
 
 ```bash
 pip install liteparse
 ```
-
-<Aside type="caution">
-  The Python package calls the LiteParse CLI under the hood via subprocess. Node.js (>= 18) is required. While the package can auto-install the CLI via `npm install -g @llamaindex/liteparse` on first use, it is recommended to install it separately beforehand.
-</Aside>
 
 ### Parsing a document
 
@@ -148,25 +135,23 @@ print(result.text)
 
 # Per-page data
 for page in result.pages:
-    print(f"Page {page.pageNum}: {len(page.textItems)} text items")
+    print(f"Page {page.page_num}: {len(page.text_items)} text items")
 ```
 
 ### Configuration
 
-The `LiteParse` constructor accepts `cli_path` (to override CLI auto-detection) and `install_if_not_available` (to control auto-install behavior). All parsing options are passed per-call:
+All options are passed to the constructor:
 
 ```python
-parser = LiteParse()
-
-result = parser.parse(
-    "document.pdf",
+parser = LiteParse(
     ocr_enabled=True,
     ocr_server_url="http://localhost:8828/ocr",
     ocr_language="fra",
     dpi=300,
     target_pages="1-5",
-    password="secret",  # for encrypted/protected documents
+    password="secret",
 )
+result = parser.parse("document.pdf")
 ```
 
 ### Parsing from bytes
@@ -181,17 +166,25 @@ result = parser.parse(pdf_bytes)
 print(result.text)
 ```
 
-### Batch parsing
-
-For multiple files, batch mode reuses the PDF engine and is significantly faster:
+### Screenshots
 
 ```python
-result = parser.batch_parse(
-    input_dir="./documents",
-    output_dir="./output",
-    recursive=True,
-    extension_filter=".pdf",
-)
-
-print(f"Output written to: {result.output_dir}")
+screenshots = parser.screenshot("document.pdf", page_numbers=[1, 2, 3])
+for s in screenshots:
+    print(f"Page {s.page_num}: {s.width}x{s.height}")
+    # s.image_bytes contains PNG data
 ```
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `TESSDATA_PREFIX` | Path to a directory containing Tesseract `.traineddata` files. For offline/air-gapped environments. Also available as the `tessdata_path` constructor option. |
+</TabItem>
+<TabItem label="Rust" value="rust">
+
+</TabItem>
+<TabItem label="Browser (WASM)" value="wasm">
+
+</TabItem>
+</Tabs>

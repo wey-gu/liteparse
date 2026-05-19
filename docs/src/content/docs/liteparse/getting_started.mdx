@@ -5,24 +5,48 @@ sidebar:
   order: 1
 ---
 
+LiteParse is available for Node.js, Python, and as a standalone Rust binary. 
+
+All versions (except WASM) ship the same CLI and core library capabilities.
+
 ## Installation
 
-Install LiteParse globally via npm to use the `lit` command anywhere:
+<Tabs>
+<TabItem label="Node.js / TypeScript" value="node">
+
 
 ```bash
 npm i -g @llamaindex/liteparse
 ```
-
-For macOS and Linux users, LiteParse can be also installed via `brew`:
+</TabItem>
+<TabItem label="Python" value="python">
 
 ```bash
-brew tap run-llama/liteparse
-brew install llamaindex-liteparse
+pip install liteparse
 ```
+</TabItem>
+<TabItem label="Rust" value="rust">
+
+```bash
+cargo install liteparse
+```
+
+</TabItem>
+<TabItem label="Browser (WASM)" value="wasm">
+
+```bash
+npm i @llamaindex/liteparse-wasm
+```
+
+Since the WASM package is designed for browser usage, it does not include the `lit` CLI command. Instead, you can use the exported functions directly from JavaScript to parse documents in the browser environment.
+
+For full browser usage and limitations, see the [WASM package guide](/liteparse/guides/browser-usage/).
+</TabItem>
+</Tabs>
 
 ## Quick start
 
-Once installed, you can start parsing from the command line:
+Once installed, parse from the command line:
 
 ```bash
 # Parse a PDF and print text to stdout
@@ -59,5 +83,6 @@ lit screenshot document.pdf -o ./screenshots
 - [Library usage](/liteparse/guides/library-usage/): Use LiteParse programmatically from TypeScript or Python.
 - [OCR configuration](/liteparse/guides/ocr/): Configure Tesseract, use an external OCR server, or bring your own.
 - [Multi-format support](/liteparse/guides/multi-format/): Parse DOCX, XLSX, PPTX, images, and more.
+- [Browser usage (WASM)](/liteparse/guides/browser-usage/): Run LiteParse entirely in the browser.
 - [Agent skill](/liteparse/guides/agent-skill/): Add LiteParse as a skill for coding agents.
 - [CLI reference](/liteparse/cli-reference/): Complete command and option reference.

@@ -5,6 +5,8 @@
 //!   - `LiteParse` class with `new(config)`, `parse(Uint8Array)`
 //!   - JS-side OCR callback bridge (any object with an async `recognize` method)
 
+mod wasi_stubs;
+
 use std::pin::Pin;
 
 use js_sys::{Function, Reflect, Uint8Array};
@@ -15,6 +17,7 @@ use wasm_bindgen_futures::JsFuture;
 use liteparse::config::{LiteParseConfig, OutputFormat};
 use liteparse::ocr::{OcrEngine, OcrOptions, OcrResult};
 use liteparse::parser::LiteParse as CoreLiteParse;
+use liteparse::search;
 use liteparse::types::PdfInput;
 
 // ---------------------------------------------------------------------------
@@ -335,4 +338,87 @@ impl LiteParse {
         serde_wasm_bindgen::to_value(&js_result)
             .map_err(|e| JsError::new(&format!("serialize result failed: {}", e)))
     }
+}
+
+// ---------------------------------------------------------------------------
+// searchItems (standalone function)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsSearchTextItem {
+    text: String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    #[serde(default)]
+    font_name: Option<String>,
+    #[serde(default)]
+    font_size: Option<f32>,
+    #[serde(default)]
+    confidence: Option<f32>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct JsSearchOptions {
+    phrase: String,
+    case_sensitive: bool,
+}
+
+impl Default for JsSearchOptions {
+    fn default() -> Self {
+        Self {
+            phrase: String::new(),
+            case_sensitive: false,
+        }
+    }
+}
+
+/// Search text items for phrase matches, returning merged items with combined bounding boxes.
+#[wasm_bindgen(js_name = "searchItems")]
+pub fn search_items(items: JsValue, options: JsValue) -> Result<JsValue, JsError> {
+    let js_items: Vec<JsSearchTextItem> = serde_wasm_bindgen::from_value(items)
+        .map_err(|e| JsError::new(&format!("invalid items: {}", e)))?;
+    let js_opts: JsSearchOptions = serde_wasm_bindgen::from_value(options)
+        .map_err(|e| JsError::new(&format!("invalid options: {}", e)))?;
+
+    let rust_items: Vec<liteparse::types::TextItem> = js_items
+        .into_iter()
+        .map(|i| liteparse::types::TextItem {
+            text: i.text,
+            x: i.x,
+            y: i.y,
+            width: i.width,
+            height: i.height,
+            font_name: i.font_name,
+            font_size: i.font_size,
+            confidence: i.confidence,
+            ..Default::default()
+        })
+        .collect();
+
+    let options = search::SearchOptions {
+        phrase: js_opts.phrase,
+        case_sensitive: js_opts.case_sensitive,
+    };
+
+    let results = search::search_items(&rust_items, &options);
+    let js_results: Vec<JsTextItem<'_>> = results
+        .iter()
+        .map(|i| JsTextItem {
+            text: &i.text,
+            x: i.x,
+            y: i.y,
+            width: i.width,
+            height: i.height,
+            font_name: i.font_name.as_deref(),
+            font_size: i.font_size,
+            confidence: i.confidence,
+        })
+        .collect();
+
+    serde_wasm_bindgen::to_value(&js_results)
+        .map_err(|e| JsError::new(&format!("serialize results failed: {}", e)))
 }

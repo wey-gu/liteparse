@@ -43,7 +43,7 @@ pub trait OcrEngine: Send + Sync {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub trait OcrEngine {
+pub trait OcrEngine: Send + Sync {
     fn name(&self) -> &str;
     fn recognize<'a, 'b: 'a, 'c: 'a>(
         &'a self,

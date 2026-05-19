@@ -1,4 +1,4 @@
-from .parser import LiteParse
+from .parser import LiteParse, search_items
 from .types import (
     ParseResult,
     ParsedPage,
@@ -15,4 +15,5 @@ __all__ = [
     "TextItem",
     "ScreenshotResult",
     "ParseError",
+    "search_items",
 ]

@@ -12,6 +12,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 interface NativeBindings {
   LiteParse: new (config?: LiteParseNativeConfig) => LiteParseNative;
+  searchItems(
+    items: NativeTextItem[],
+    phrase: string,
+    caseSensitive?: boolean | null,
+  ): NativeTextItem[];
 }
 
 export interface LiteParseNativeConfig {

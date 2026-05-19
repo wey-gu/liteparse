@@ -155,4 +155,25 @@ function toTextItem(item: NativeTextItem): TextItem {
   };
 }
 
+// ---------------------------------------------------------------------------
+// searchItems — standalone utility
+// ---------------------------------------------------------------------------
+
+export interface SearchItemsOptions {
+  phrase: string;
+  caseSensitive?: boolean;
+}
+
+export function searchItems(
+  items: TextItem[],
+  options: SearchItemsOptions,
+): TextItem[] {
+  const nativeResults = native.searchItems(
+    items,
+    options.phrase,
+    options.caseSensitive ?? false,
+  );
+  return nativeResults.map(toTextItem);
+}
+
 export default LiteParse;

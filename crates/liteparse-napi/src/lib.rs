@@ -3,7 +3,7 @@ use napi_derive::napi;
 
 mod types;
 
-use types::{JsLiteParseConfig, JsParseResult, JsScreenshotResult};
+use types::{JsLiteParseConfig, JsParseResult, JsScreenshotResult, JsTextItem};
 
 /// Main LiteParse parser class.
 #[napi]
@@ -106,4 +106,22 @@ impl LiteParse {
     pub fn config(&self) -> JsLiteParseConfig {
         JsLiteParseConfig::from_rust(&self.config)
     }
+}
+
+/// Search text items for phrase matches, returning merged items with combined bounding boxes.
+#[napi]
+pub fn search_items(
+    items: Vec<JsTextItem>,
+    phrase: String,
+    case_sensitive: Option<bool>,
+) -> Vec<JsTextItem> {
+    let rust_items: Vec<_> = items.iter().map(|i| i.to_rust()).collect();
+    let options = liteparse::search::SearchOptions {
+        phrase,
+        case_sensitive: case_sensitive.unwrap_or(false),
+    };
+    liteparse::search::search_items(&rust_items, &options)
+        .iter()
+        .map(JsTextItem::from_rust)
+        .collect()
 }

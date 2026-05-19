@@ -180,7 +180,6 @@ impl LiteParse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ParsedPage;
 
     #[test]
     #[allow(clippy::field_reassign_with_default)]
