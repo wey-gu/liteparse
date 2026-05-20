@@ -11,6 +11,7 @@ from fastapi.param_functions import File, Form
 from PIL import Image
 from pydantic import BaseModel
 
+LANG_MAP = {"eng": "en"}
 
 class OcrResponse(BaseModel):
     results: list[Any]
@@ -38,6 +39,11 @@ class EasyOCRServer:
             )
             # Get language from request
             language = language.lower()
+            
+            # Normalize language
+            if language in LANG_MAP:
+                language = LANG_MAP[language]
+
             if self.reader is None or self.current_language != language:
                 print(f"Initializing EasyOCR reader for language: {language}")
                 self.reader = easyocr.Reader([language], gpu=False)

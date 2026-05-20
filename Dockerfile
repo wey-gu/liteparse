@@ -1,34 +1,37 @@
-# Stage 1: Build from source (needs build tools for native addons like sharp, pdfium)
-FROM node:24-trixie AS builder
+# Stage 1: Build from source
+FROM rust:1-bookworm AS builder
+
+RUN apt-get update && apt-get install -y \
+    libclang-dev \
+    libtesseract-dev \
+    libleptonica-dev \
+    cmake \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts=false
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
 
-COPY src/ ./src/
-COPY cli/ ./cli/
-COPY tsconfig.json ./
-RUN npm run build
+RUN cargo build --release
 
 # Stage 2: Minimal runtime image
-FROM node:24-trixie-slim
+FROM debian:bookworm-slim
 
-# sharp and @hyzyla/pdfium ship prebuilt binaries but may need these shared libs at runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libvips42 \
+    libtesseract5 \
+    liblept5 \
+    tesseract-ocr-eng \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /usr/local/lib/liteparse
-COPY --from=builder /build/package.json ./
-COPY --from=builder /build/dist/ ./dist/
-COPY --from=builder /build/src/vendor/pdfjs ./src/vendor/pdfjs/
-COPY --from=builder /build/node_modules/ ./node_modules/
+COPY --from=builder /build/target/release/lit /usr/local/bin/lit
+# pdfium shared library
+COPY --from=builder /root/.cache/pdfium-rs/ /usr/local/lib/pdfium-rs/
 
-# Make the CLI executable + globally available via symlinks
-RUN chmod +x /usr/local/lib/liteparse/dist/src/index.js
-RUN ln -s /usr/local/lib/liteparse/dist/src/index.js /usr/local/bin/lit \
-    && ln -s /usr/local/lib/liteparse/dist/src/index.js /usr/local/bin/liteparse
+# Ensure pdfium is discoverable at runtime
+ENV LD_LIBRARY_PATH="/usr/local/lib/pdfium-rs"
 
+RUN ln -s /usr/local/bin/lit /usr/local/bin/liteparse
 
 CMD ["/bin/sh"]

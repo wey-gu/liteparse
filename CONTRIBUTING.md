@@ -10,14 +10,7 @@ Thank you for your interest in contributing to LiteParse! This document provides
    git clone https://github.com/YOUR_USERNAME/liteparse.git
    cd liteparse
    ```
-3. Install dependencies:
-   ```bash
-   npm install
-   ```
-4. Build the project:
-   ```bash
-   npm run build
-   ```
+3. Install prerequisites (see [Development Prerequisites](#development-prerequisites))
 
 ## What to Contribute?
 
@@ -33,112 +26,141 @@ We are less interested in:
 - Any LLM integration or agent code
 - Anything that doesn't directly relate to improving the core parsing and extraction capabilities
 
-While the project is in Typescript today, I'm pretty open to porting to Rust if someone wanted to take that on as a contribution. The core algorithms and logic would be the same, just implemented in Rust instead of Typescript.
+## Architecture Overview
+
+LiteParse is written in Rust with bindings for multiple platforms:
+
+```
+crates/
+├── liteparse/           # Core Rust library (parsing, grid projection, OCR, output)
+├── pdfium-sys/          # Raw FFI bindings to PDFium (auto-downloads pdfium)
+├── pdfium/              # Safe Rust wrapper around pdfium-sys
+├── liteparse-napi/      # Node.js native addon (napi-rs)
+├── liteparse-python/    # Python extension module (PyO3 + maturin)
+└── liteparse-wasm/      # WebAssembly bindings (wasm-bindgen + wasm-pack)
+
+packages/
+├── node/                # Node.js package (@llamaindex/liteparse)
+├── python/              # Python package (liteparse)
+└── wasm/                # WASM package (@llamaindex/liteparse-wasm)
+```
+
+## Development Prerequisites
+
+You'll need the following tools installed:
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| **Rust toolchain** | Core library and all bindings | [rustup.rs](https://rustup.rs) |
+| **napi-rs CLI** | Node.js native addon builds | `npm i -g @napi-rs/cli` |
+| **maturin** | Python extension builds | `pip install maturin` |
+| **wasm-pack** | WebAssembly builds | `cargo install wasm-pack` |
+
+PDFium is **auto-downloaded** by the `pdfium-sys` build script — no manual setup needed. For WASM, a static `libpdfium.a` is downloaded and linked into the `.wasm` binary. For native targets, a shared library (`.dylib`/`.so`/`.dll`) is downloaded and copied to the build output.
+
+## Building
+
+### Important: Workspace-wide `cargo build` will fail
+
+The binding crates (`liteparse-python`, `liteparse-napi`, `liteparse-wasm`) each require their own specialized toolchain to link correctly. A plain `cargo build` at the workspace root will fail because, for example, the Python bindings need a Python interpreter to resolve `_Py*` symbols.
+
+### Core Rust library only
+
+```bash
+cargo build -p liteparse
+```
+
+### Node.js bindings (napi-rs)
+
+```bash
+cd packages/node
+npm install
+npm run build          # Builds Rust → .node addon, copies pdfium, compiles TS
+```
+
+Individual steps:
+```bash
+npm run build:rs       # napi build (compiles liteparse-napi crate)
+npm run build:pdfium   # Copies pdfium shared library alongside the addon
+npm run build:ts       # Compiles TypeScript wrapper
+```
+
+To test locally, import from the package directly or use `npm link`:
+```js
+import { LiteParse } from './packages/node/dist/lib.js';
+```
+
+### Python bindings (maturin + PyO3)
+
+```bash
+cd packages/python
+maturin develop        # Builds Rust and installs into active virtualenv
+```
+
+`maturin develop` compiles the `liteparse-python` crate and installs the resulting package into your current Python virtual environment. Then test with:
+```python
+import liteparse
+```
+
+### WASM bindings (wasm-pack)
+
+```bash
+cd packages/wasm
+npm run build          # Browser target (--target web)
+npm run build:bundler  # Bundler target (webpack/vite)
+npm run build:nodejs   # Node.js target
+```
+
+PDFium is statically linked into the `.wasm` binary — the output in `packages/wasm/pkg/` is fully self-contained.
 
 ## Development Workflow
 
-### Building
+### Testing Local Changes
 
 ```bash
-npm run build      # Build TypeScript
-npm run dev        # Watch mode for development
-```
+# Parse a document (Node.js CLI)
+cd packages/node && npm run build
+node dist/cli.js parse document.pdf
 
-### Testing
-
-```bash
-npm test           # Run tests
-npm run test:watch # Run tests in watch mode
+# Python CLI
+cd packages/python && maturin develop
+lit parse document.pdf
 ```
 
 ### Linting & Formatting
 
 ```bash
-npm run lint       # Check for linting issues
-npm run lint:fix   # Fix linting issues
-npm run format     # Format code with Prettier
-```
-
-### Testing Local Changes
-
-You can test your changes locally:
-
-```bash
-# Parse a document
-./dist/src/index.js parse document.pdf
-
-# Generate screenshots
-./dist/src/index.js screenshot document.pdf -o ./screenshots
+cargo fmt              # Format Rust code
+cargo clippy           # Lint Rust code
 ```
 
 ### Debugging Grid Projection
 
-When working on the grid projection algorithm (`src/processing/gridProjection.ts`), you can enable built-in debug logging and visual output instead of adding ad-hoc `console.log` statements.
+When working on the grid projection algorithm, you can enable built-in debug logging and visual output instead of adding ad-hoc `console.log` statements.
 
 **Debug logging** traces every decision the projection makes — block detection, anchor extraction, snap assignment, rendering, and flowing text classification:
 
 ```bash
-# Log all projection decisions to stderr
-./dist/src/index.js parse document.pdf --debug
-
-# Filter to a specific page
-./dist/src/index.js parse document.pdf --debug --debug-page 3
-
-# Filter to elements containing specific text
-./dist/src/index.js parse document.pdf --debug --debug-text-filter "Total" "Revenue"
-
-# Filter to a bounding region (x1,y1,x2,y2 in PDF points)
-./dist/src/index.js parse document.pdf --debug --debug-region "0,100,300,200"
-
-# Write debug log to a file
-./dist/src/index.js parse document.pdf --debug --debug-output ./debug-output
+lit parse document.pdf --debug
+lit parse document.pdf --debug --debug-page 3
+lit parse document.pdf --debug --debug-text-filter "Total" "Revenue"
+lit parse document.pdf --debug --debug-region "0,100,300,200"
+lit parse document.pdf --debug --debug-output ./debug-output
 ```
 
-**Visual grid export** generates PNG images showing text boxes color-coded by snap type (blue=left, red=right, green=center, gray=floating, yellow=flowing) with anchor lines overlaid. This is useful for comparing against page screenshots to spot projection issues:
+**Visual grid export** generates PNG images showing text boxes color-coded by snap type (blue=left, red=right, green=center, gray=floating, yellow=flowing) with anchor lines overlaid:
 
 ```bash
-# Generate visualization PNGs (one per page)
-./dist/src/index.js parse document.pdf --debug-visualize
-
-# Specify output directory
-./dist/src/index.js parse document.pdf --debug-visualize --debug-output ./my-debug
+lit parse document.pdf --debug-visualize
+lit parse document.pdf --debug-visualize --debug-output ./my-debug
 ```
-
-These options are also available via the library API:
-
-```typescript
-const parser = new LiteParse({
-  debug: {
-    enabled: true,
-    textFilter: ["Total"],
-    pageFilter: 2,
-    visualize: true,
-    visualizePath: "./debug-output",
-  }
-});
-```
-
-See `src/processing/gridDebugLogger.ts` for the full `GridDebugConfig` interface and `src/processing/gridVisualizer.ts` for the visualization renderer.
-
-## Making Changes
-
-### Versioning & Changelogs
-
-We use [Changesets](https://github.com/changesets/changesets) to manage versioning and changelogs. When you make a change to source code that should be released:
-
-1. Run `npm run changeset`
-2. Select the type of change (patch, minor, major)
-3. Write a description of your changes
-4. Commit the generated changeset file with your PR
 
 ## Pull Requests
 
 1. Fork and create a feature branch from `main`
 2. Make your changes
-3. Add a changeset if needed (`npm run changeset`)
-4. Ensure all tests pass (`npm test`)
-5. Ensure linting passes (`npm run lint:fix` and `npm run format`)
-6. Submit a pull request
+3. Ensure linting passes (`cargo fmt --check && cargo clippy`)
+4. Submit a pull request
 
 When you submit a PR, a number of CICD checks will run. Among these, your code will be tested against a regression suite of documents to ensure that your changes don't break existing parsing capabilities. It will be up to the maintainers discretion to determine if any changes to the regression set are expected/positive or unexpected/negative.
 
@@ -169,17 +191,6 @@ For other bugs:
 2. Include steps to reproduce
 3. Include error messages/stack traces
 4. Include version information
-
-## Project Structure
-
-See [AGENTS.md](AGENTS.md) for detailed documentation about the codebase structure and architecture.
-
-Key directories:
-- `src/core/` - Main orchestrator and configuration
-- `src/engines/` - PDF and OCR engine implementations
-- `src/processing/` - Text extraction and spatial analysis
-- `src/output/` - Output formatters
-- `cli/` - CLI implementation
 
 ## Questions?
 

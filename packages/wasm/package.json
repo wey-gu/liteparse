@@ -1,0 +1,48 @@
+{
+  "name": "@llamaindex/liteparse-wasm",
+  "version": "2.0.0",
+  "description": "Fast, lightweight PDF parsing with spatial text extraction — WebAssembly build for browsers",
+  "type": "module",
+  "main": "./pkg/liteparse_wasm.js",
+  "types": "./pkg/liteparse_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/liteparse_wasm.d.ts",
+      "import": "./pkg/liteparse_wasm.js"
+    },
+    "./liteparse_wasm_bg.wasm": "./pkg/liteparse_wasm_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "pkg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "wasm-pack build ../../crates/liteparse-wasm --release --target web --out-dir ../../packages/wasm/pkg --out-name liteparse_wasm && node scripts/patch-wasi-imports.js",
+    "build:bundler": "wasm-pack build ../../crates/liteparse-wasm --release --target bundler --out-dir ../../packages/wasm/pkg --out-name liteparse_wasm && node scripts/patch-wasi-imports.js",
+    "build:nodejs": "wasm-pack build ../../crates/liteparse-wasm --release --target nodejs --out-dir ../../packages/wasm/pkg --out-name liteparse_wasm && node scripts/patch-wasi-imports.js",
+    "clean": "rm -rf pkg",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "pdf",
+    "parser",
+    "ocr",
+    "text-extraction",
+    "pdf-to-text",
+    "wasm",
+    "webassembly",
+    "browser",
+    "document-parsing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/run-llama/liteparse.git"
+  },
+  "author": "LlamaIndex",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

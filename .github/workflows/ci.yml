@@ -6,63 +6,82 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  lint-and-build:
+  fmt:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --component rustfmt
+      - run: cargo fmt --all -- --check
 
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtesseract-dev libleptonica-dev
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+      - run: rustup toolchain install stable --profile minimal --component clippy
+      - run: cargo clippy --all-targets
+
+  build-and-test:
     strategy:
       matrix:
-        node-version: [18, 20, 22]
-
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtesseract-dev libleptonica-dev
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install tesseract leptonica
+
+      - uses: actions/cache@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: "npm"
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            ~/Library/Caches/pdfium-rs
+            ${{ runner.os == 'Windows' && format('{0}\pdfium-rs', env.LOCALAPPDATA) || '' }}
+            target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Force Ninja generator (Windows)
+        if: runner.os == 'Windows'
+        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+        shell: bash
 
-      - name: Check formatting
-        run: npm run format:check
+      - run: cargo build --workspace --all-targets --exclude liteparse-python --exclude liteparse-napi
+      - run: cargo test --workspace --exclude liteparse-python --exclude liteparse-napi
 
-      - name: Run linter
-        run: npm run lint
+      - name: CLI smoke test
+        if: runner.os != 'Windows'
+        run: |
+          ./target/debug/lit --version
+          ./target/debug/lit parse demo/docs/apple-10k-2024.pdf --no-ocr --max-pages 1 -q | head -5
 
-      - name: Build
-        run: npm run build
-
-  test:
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [18, 20, 22]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npm run test
-
-  # test that docker builds
+  # Test that docker builds
   build-docker-image:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
       - name: Build the base Docker image

@@ -1,0 +1,88 @@
+---
+title: Getting Started
+description: Install LiteParse and parse your first document in under a minute.
+sidebar:
+  order: 1
+---
+
+LiteParse is available for Node.js, Python, and as a standalone Rust binary. 
+
+All versions (except WASM) ship the same CLI and core library capabilities.
+
+## Installation
+
+<Tabs>
+<TabItem label="Node.js / TypeScript" value="node">
+
+
+```bash
+npm i -g @llamaindex/liteparse
+```
+</TabItem>
+<TabItem label="Python" value="python">
+
+```bash
+pip install liteparse
+```
+</TabItem>
+<TabItem label="Rust" value="rust">
+
+```bash
+cargo install liteparse
+```
+
+</TabItem>
+<TabItem label="Browser (WASM)" value="wasm">
+
+```bash
+npm i @llamaindex/liteparse-wasm
+```
+
+Since the WASM package is designed for browser usage, it does not include the `lit` CLI command. Instead, you can use the exported functions directly from JavaScript to parse documents in the browser environment.
+
+For full browser usage and limitations, see the [WASM package guide](/liteparse/guides/browser-usage/).
+</TabItem>
+</Tabs>
+
+## Quick start
+
+Once installed, parse from the command line:
+
+```bash
+# Parse a PDF and print text to stdout
+lit parse document.pdf
+
+# Save output to a file
+lit parse document.pdf -o output.txt
+
+# Get structured JSON with bounding boxes
+lit parse document.pdf --format json -o output.json
+
+# Parse only specific pages
+lit parse document.pdf --target-pages "1-5,10,15-20"
+```
+
+### Batch parsing
+
+Parse an entire directory of documents at once:
+
+```bash
+lit batch-parse ./pdfs ./outputs
+```
+
+### Screenshots
+
+Generate page images from a PDF for LLM agents or visual workflows:
+
+```bash
+lit screenshot document.pdf -o ./screenshots
+```
+
+## Next steps
+
+- [Library usage](/liteparse/guides/library-usage/): Use LiteParse programmatically from TypeScript or Python.
+- [OCR configuration](/liteparse/guides/ocr/): Configure Tesseract, use an external OCR server, or bring your own.
+- [Multi-format support](/liteparse/guides/multi-format/): Parse DOCX, XLSX, PPTX, images, and more.
+- [Browser usage (WASM)](/liteparse/guides/browser-usage/): Run LiteParse entirely in the browser.
+- [Agent skill](/liteparse/guides/agent-skill/): Add LiteParse as a skill for coding agents.
+- [CLI reference](/liteparse/cli-reference/): Complete command and option reference.

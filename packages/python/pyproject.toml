@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "liteparse"
-version = "1.2.1"
-description = "Python wrapper for LiteParse - fast, lightweight PDF and document parsing"
+version = "2.0.0"
+description = "Python bindings for LiteParse - fast, lightweight PDF and document parsing"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
     "Topic :: Text Processing",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Typing :: Typed",
@@ -33,6 +34,9 @@ Homepage = "https://github.com/run-llama/liteparse"
 Documentation = "https://github.com/run-llama/liteparse#readme"
 Repository = "https://github.com/run-llama/liteparse"
 
+[project.scripts]
+lit = "liteparse.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
@@ -40,8 +44,16 @@ dev = [
     "mypy>=1.0",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["liteparse"]
+[tool.maturin]
+manifest-path = "../../crates/liteparse-python/Cargo.toml"
+python-source = "."
+module-name = "liteparse._liteparse"
+# Bundle libpdfium alongside the extension module
+include = [
+    { path = "liteparse/libpdfium.dylib", format = "wheel" },
+    { path = "liteparse/libpdfium.so", format = "wheel" },
+    { path = "liteparse/pdfium.dll", format = "wheel" },
+]
 
 [tool.mypy]
 python_version = "3.10"

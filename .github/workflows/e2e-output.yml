@@ -24,19 +24,20 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libreoffice imagemagick ghostscript tesseract-ocr
+          sudo apt-get install -y libtesseract-dev libleptonica-dev \
+            tesseract-ocr libreoffice imagemagick ghostscript
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/cache@v4
         with:
-          node-version: 20
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build
-        run: npm run build
+        run: cargo build --release
 
       - name: Download from HuggingFace
         env:
@@ -107,13 +108,20 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libreoffice imagemagick ghostscript tesseract-ocr
+          sudo apt-get install -y libtesseract-dev libleptonica-dev \
+            tesseract-ocr libreoffice imagemagick ghostscript
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/cache@v4
         with:
-          node-version: 20
-          cache: "npm"
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pdfium-rs
+            target
+          key: ${{ runner.os }}-cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -121,12 +129,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          npm ci
-          pip install huggingface_hub
-
-      - name: Build
-        run: npm run build
+        run: pip install huggingface_hub
 
       - name: Download existing dataset from HuggingFace
         env:
@@ -142,4 +145,4 @@ jobs:
             echo "Warning: HF_TOKEN not set, skipping upload"
             exit 0
           fi
-          npx tsx scripts/upload-dataset.ts expected-dataset ${{ vars.HF_DATASET_REPO || 'llamaindex/liteparse_cicd_data' }}
+          ./scripts/upload-dataset.sh expected-dataset ${{ vars.HF_DATASET_REPO || 'llamaindex/liteparse_cicd_data' }}

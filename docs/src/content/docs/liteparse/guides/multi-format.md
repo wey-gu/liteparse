@@ -13,9 +13,9 @@ LiteParse automatically converts non-PDF formats to PDF before parsing. This let
 
 | Category | Extensions |
 |----------|-----------|
-| Word | `.doc`, `.docx`, `.docm`, `.odt`, `.rtf` |
-| PowerPoint | `.ppt`, `.pptx`, `.pptm`, `.odp` |
-| Spreadsheets | `.xls`, `.xlsx`, `.xlsm`, `.ods`, `.csv`, `.tsv` |
+| Word | `.doc`, `.docx`, `.docm`, `.odt`, `.rtf`, `.pages` |
+| PowerPoint | `.ppt`, `.pptx`, `.pptm`, `.odp`, `.key` |
+| Spreadsheets | `.xls`, `.xlsx`, `.xlsm`, `.ods`, `.csv`, `.tsv`, `.numbers` |
 
 ### Images (via ImageMagick)
 

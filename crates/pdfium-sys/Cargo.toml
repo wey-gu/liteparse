@@ -1,0 +1,18 @@
+[package]
+name = "liteparse-pdfium-sys"
+version = "1.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Raw FFI bindings to PDFium for liteparse"
+links = "pdfium"
+
+[features]
+default = []
+bindgen = ["dep:bindgen"]
+
+[build-dependencies]
+bindgen = { version = "0.71", optional = true }
+flate2 = "1"
+tar = "0.4"
+ureq = "3"

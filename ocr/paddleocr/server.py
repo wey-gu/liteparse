@@ -1,5 +1,6 @@
 import io
 import logging
+import traceback
 from typing import Any
 
 import numpy as np
@@ -34,6 +35,7 @@ class PaddleOCRServer:
     def normalize_language(language: str) -> str:
         normalized = language.lower()
         aliases = {
+            "eng": "en",
             "zh": "ch",
             "zh-cn": "ch",
             "zh-hans": "ch",
@@ -87,6 +89,7 @@ class PaddleOCRServer:
                     raise HTTPException(status_code=400, detail=str(ve))
                 raise HTTPException(status_code=500, detail=str(ve))
             except Exception as e:
+                logging.error("OCR failed:\n%s", traceback.format_exc())
                 raise HTTPException(status_code=500, detail=str(e))
 
             # Format results according to LiteParse OCR API spec

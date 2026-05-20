@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-To parse remote files, LiteParse support both CLI and library usage for reading bytes and streams. This means the CLI can download them with any tool you like and pipe the bytes to `lit parse` using `-` as the file argument, while the libraries can fetch the bytes directly from the URL and pass them to the parser.
+To parse remote files, LiteParse supports both CLI and library usage for reading bytes and streams. The CLI can download them with any tool you like and pipe the bytes to `lit parse` using `-` as the file argument, while the libraries can fetch the bytes directly and pass them to the parser.
 
 ## CLI usage
 
@@ -24,7 +24,9 @@ The `-` argument tells LiteParse to read from stdin instead of a file path. Any 
 
 ## Library usage
 
-The TypeScript library accepts `Buffer`/`Uint8Array` directly, so you can handle the download however you like:
+The TypeScript library accepts `Buffer`/`Uint8Array` directly, so you can handle the download however you like.
+
+For example, using `fetch` in a Node.js environment:
 
 ```typescript
 import { LiteParse } from "@llamaindex/liteparse";

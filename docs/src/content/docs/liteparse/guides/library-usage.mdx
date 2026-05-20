@@ -1,0 +1,190 @@
+---
+title: Library Usage
+description: Use LiteParse programmatically from TypeScript or Python.
+sidebar:
+  order: 1
+---
+
+LiteParse can be used as a library in your own code, not just from the CLI. There are native packages for both TypeScript and Python.
+
+
+<Tabs>
+<TabItem label="TypeScript" value="typescript">
+
+## TypeScript / Node.js usage
+
+Install as a project dependency:
+
+```bash
+npm install @llamaindex/liteparse
+# or
+pnpm add @llamaindex/liteparse
+```
+
+### Parsing a document
+
+```typescript
+import { LiteParse } from "@llamaindex/liteparse";
+
+const parser = new LiteParse({ ocrEnabled: true });
+const result = await parser.parse("document.pdf");
+
+// Full document text with layout preserved
+console.log(result.text);
+
+// Per-page data
+for (const page of result.pages) {
+  console.log(`Page ${page.pageNum}: ${page.textItems.length} text items`);
+}
+```
+
+### JSON output with bounding boxes
+
+Text items include spatial coordinates (`x`, `y`, `width`, `height`) in PDF points:
+
+```typescript
+const parser = new LiteParse({ outputFormat: "json" });
+const result = await parser.parse("document.pdf");
+
+for (const page of result.pages) {
+  for (const item of page.textItems) {
+    console.log(`[${item.x}, ${item.y}] ${item.width}×${item.height} "${item.text}"`);
+  }
+}
+```
+
+### Configuration
+
+Pass any config options to the constructor. You only need to specify what you want to override:
+
+```typescript
+const parser = new LiteParse({
+  ocrEnabled: true,
+  ocrServerUrl: "http://localhost:8828/ocr",
+  ocrLanguage: "fra",
+  dpi: 300,
+  outputFormat: "json",
+  targetPages: "1-10",
+  password: "secret",
+});
+```
+
+### Buffer / Uint8Array input
+
+You can pass raw bytes directly instead of a file path:
+
+```typescript
+import { readFile } from "fs/promises";
+
+const parser = new LiteParse();
+
+// From a file read
+const pdfBytes = await readFile("document.pdf");
+const result = await parser.parse(pdfBytes);
+
+// From an HTTP response
+const response = await fetch("https://example.com/document.pdf");
+const buffer = Buffer.from(await response.arrayBuffer());
+const result2 = await parser.parse(buffer);
+```
+
+### Screenshots
+
+Generate page images as buffers — useful for sending to LLMs or saving to disk:
+
+```typescript
+const parser = new LiteParse();
+const screenshots = parser.screenshot("document.pdf");
+
+for (const shot of screenshots) {
+  console.log(`Page ${shot.pageNum}: ${shot.width}x${shot.height}`);
+  // shot.imageBuffer contains the raw PNG data
+}
+
+// Screenshot specific pages
+const shots = parser.screenshot("document.pdf", [1, 2, 3]);
+```
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `TESSDATA_PREFIX` | Path to a directory containing Tesseract `.traineddata` files. For offline/air-gapped environments. Also available as the `tessdataPath` config option. |
+
+</TabItem>
+<TabItem label="Python" value="python">
+
+## Python usage
+
+Install the package from PyPI:
+
+```bash
+pip install liteparse
+```
+
+### Parsing a document
+
+```python
+from liteparse import LiteParse
+
+parser = LiteParse()
+result = parser.parse("document.pdf")
+
+# Full document text
+print(result.text)
+
+# Per-page data
+for page in result.pages:
+    print(f"Page {page.page_num}: {len(page.text_items)} text items")
+```
+
+### Configuration
+
+All options are passed to the constructor:
+
+```python
+parser = LiteParse(
+    ocr_enabled=True,
+    ocr_server_url="http://localhost:8828/ocr",
+    ocr_language="fra",
+    dpi=300,
+    target_pages="1-5",
+    password="secret",
+)
+result = parser.parse("document.pdf")
+```
+
+### Parsing from bytes
+
+If you already have file contents in memory (e.g. from a web upload), pass them directly to `parse()`:
+
+```python
+with open("document.pdf", "rb") as f:
+    pdf_bytes = f.read()
+
+result = parser.parse(pdf_bytes)
+print(result.text)
+```
+
+### Screenshots
+
+```python
+screenshots = parser.screenshot("document.pdf", page_numbers=[1, 2, 3])
+for s in screenshots:
+    print(f"Page {s.page_num}: {s.width}x{s.height}")
+    # s.image_bytes contains PNG data
+```
+
+### Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `TESSDATA_PREFIX` | Path to a directory containing Tesseract `.traineddata` files. For offline/air-gapped environments. Also available as the `tessdata_path` constructor option. |
+</TabItem>
+<TabItem label="Rust" value="rust">
+
+</TabItem>
+<TabItem label="Browser (WASM)" value="wasm">
+
+</TabItem>
+</Tabs>

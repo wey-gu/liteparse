@@ -1,0 +1,5 @@
+# Native extension and bundled dylib (built by maturin)
+*.so
+*.pyd
+*.dylib
+*.dll

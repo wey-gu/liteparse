@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>LiteParse WASM Browser Test</title>
+</head>
+<body>
+  <div id="status">loading</div>
+  <div id="result" style="display:none"></div>
+  <div id="error" style="display:none"></div>
+
+  <script type="module">
+    const status = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const errorEl = document.getElementById("error");
+
+    try {
+      status.textContent = "loading wasm";
+      const { default: init, LiteParse } = await import("/packages/wasm/pkg/liteparse_wasm.js");
+      await init();
+
+      status.textContent = "creating parser";
+      const parser = new LiteParse({ ocrEnabled: false, outputFormat: "text", quiet: true });
+
+      status.textContent = "fetching pdf";
+      const resp = await fetch("/demo/docs/apple-10k-2024.pdf");
+      if (!resp.ok) throw new Error(`Failed to fetch PDF: ${resp.status}`);
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+
+      status.textContent = "parsing";
+      const result = await parser.parse(bytes);
+
+      const pageCount = result.pages.length;
+      const textLength = result.text.length;
+      const hasText = textLength > 100;
+
+      if (pageCount === 0) throw new Error("No pages parsed");
+      if (!hasText) throw new Error(`Text too short: ${textLength} chars`);
+
+      status.textContent = "done";
+      resultEl.style.display = "block";
+      resultEl.setAttribute("data-pages", pageCount);
+      resultEl.setAttribute("data-text-length", textLength);
+      resultEl.textContent = `OK: ${pageCount} pages, ${textLength} chars`;
+    } catch (err) {
+      status.textContent = "error";
+      errorEl.style.display = "block";
+      errorEl.textContent = err.message || String(err);
+      console.error(err);
+    }
+  </script>
+</body>
+</html>

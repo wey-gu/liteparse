@@ -1,37 +1,19 @@
-from .parser import LiteParse
+from .parser import LiteParse, search_items
 from .types import (
-    # Enums
-    OutputFormat,
-    ImageFormat,
-    # Results
     ParseResult,
-    BatchResult,
     ParsedPage,
     TextItem,
-    BoundingBox,
     ScreenshotResult,
-    ScreenshotBatchResult,
-    # Errors
     ParseError,
-    CLINotFoundError,
 )
 
-__version__ = "1.2.1"
+__version__ = "2.0.0"
 __all__ = [
-    # Main class
     "LiteParse",
-    # Enums
-    "OutputFormat",
-    "ImageFormat",
-    # Results
     "ParseResult",
-    "BatchResult",
     "ParsedPage",
     "TextItem",
-    "BoundingBox",
     "ScreenshotResult",
-    "ScreenshotBatchResult",
-    # Errors
     "ParseError",
-    "CLINotFoundError",
+    "search_items",
 ]
