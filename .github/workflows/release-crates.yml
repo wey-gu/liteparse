@@ -118,9 +118,9 @@ jobs:
         run: |
           if [ "${{ matrix.use-cross }}" = "true" ]; then
             # Cross-compile without tesseract (C cross-deps are hard)
-            cargo build --release --target ${{ matrix.target }} --no-default-features
+            cargo build --release --target ${{ matrix.target }} --no-default-features -p liteparse
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build --release --target ${{ matrix.target }} -p liteparse
           fi
 
       - name: Package binary
