@@ -192,7 +192,6 @@ struct LiteParse {
     inner: liteparse::parser::LiteParse,
     config: LiteParseConfig,
     runtime: tokio::runtime::Runtime,
-    pdfium: pdfium::Library,
 }
 
 #[pymethods]
@@ -271,13 +270,11 @@ impl LiteParse {
         let inner = liteparse::parser::LiteParse::new(cfg.clone());
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let pdfium = pdfium::Library::init();
 
         Ok(Self {
             inner,
             config: cfg,
             runtime,
-            pdfium,
         })
     }
 
@@ -300,6 +297,9 @@ impl LiteParse {
     }
 
     /// Take screenshots of document pages. Returns a list of ScreenshotResult.
+    ///
+    /// Non-PDF files are automatically converted to PDF before rendering when
+    /// LibreOffice/ImageMagick are available.
     #[pyo3(signature = (input, page_numbers = None))]
     fn screenshot(
         &self,
@@ -307,58 +307,21 @@ impl LiteParse {
         input: String,
         page_numbers: Option<Vec<u32>>,
     ) -> PyResult<Vec<PyScreenshotResult>> {
-        let dpi = self.config.dpi;
-        let password = self.config.password.clone();
-        py.detach(move || {
-            let document = self
-                .pdfium
-                .load_document(&input, password.as_deref())
+        py.detach(|| {
+            let results = self
+                .runtime
+                .block_on(self.inner.screenshot(&input, page_numbers))
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let page_count = document.page_count() as u32;
 
-            let pages: Vec<u32> = match page_numbers {
-                Some(nums) => nums,
-                None => (1..=page_count).collect(),
-            };
-
-            let mut results = Vec::with_capacity(pages.len());
-            for page_num in pages {
-                if page_num < 1 || page_num > page_count {
-                    return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "page {page_num} out of range (document has {page_count} pages)"
-                    )));
-                }
-                let page = document.page((page_num - 1) as i32).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
-                let bitmap = page.render(dpi).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
-                })?;
-
-                let width = bitmap.width() as u32;
-                let height = bitmap.height() as u32;
-                let rgba = bitmap.to_rgba();
-
-                let mut png_buf: Vec<u8> = Vec::new();
-                let encoder = image::codecs::png::PngEncoder::new(&mut png_buf);
-                use image::ImageEncoder;
-                encoder
-                    .write_image(&rgba, width, height, image::ColorType::Rgba8.into())
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                            "PNG encode failed: {e}"
-                        ))
-                    })?;
-
-                results.push(PyScreenshotResult {
-                    page_num,
-                    width,
-                    height,
-                    image_buffer: png_buf,
-                });
-            }
-
-            Ok(results)
+            Ok(results
+                .into_iter()
+                .map(|r| PyScreenshotResult {
+                    page_num: r.page_num,
+                    width: r.width,
+                    height: r.height,
+                    image_buffer: r.image_bytes,
+                })
+                .collect())
         })
     }
 

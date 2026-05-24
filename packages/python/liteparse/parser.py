@@ -158,8 +158,12 @@ class LiteParse:
         """
         Generate screenshots of document pages.
 
+        Supports PDFs natively. Non-PDF formats (DOCX, XLSX, images, etc.) are
+        automatically converted to PDF before rendering when the required system
+        tools are installed. Plain-text formats cannot be rendered.
+
         Args:
-            file_path: Path to the document file.
+            file_path: Path to the document file (PDF, DOCX, images, etc.).
             page_numbers: Specific page numbers to screenshot (1-indexed).
                           If None, screenshots all pages.
 

@@ -21,7 +21,7 @@ struct Cli {
 enum Commands {
     /// Parse a document file (PDF, DOCX, XLSX, PPTX, images, etc.)
     Parse(ParseCommand),
-    /// Generate screenshots of PDF pages
+    /// Generate screenshots of document pages (PDF, DOCX, XLSX, images, etc.)
     Screenshot(ScreenshotCommand),
     /// Parse multiple documents in batch mode
     BatchParse(BatchParseCommand),
@@ -175,23 +175,23 @@ pub fn run_cli(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
             std::fs::create_dir_all(&cmd.output_dir)?;
 
-            let lib = pdfium::Library::init();
-            let document = lib.load_document(&cmd.file, cmd.password.as_deref())?;
-            let page_count = document.page_count();
+            let config = LiteParseConfig {
+                target_pages: cmd.target_pages.clone(),
+                dpi: cmd.dpi,
+                password: cmd.password.clone(),
+                quiet: cmd.quiet,
+                ..Default::default()
+            };
+            let lp = LiteParse::new(config);
+            let results = rt.block_on(lp.screenshot(&cmd.file, target_pages))?;
 
-            for page_index in 0..page_count {
-                let page_number = page_index as u32 + 1;
-                if let Some(ref targets) = target_pages
-                    && !targets.contains(&page_number)
-                {
-                    continue;
-                }
-                let output_path = format!("{}/page_{}.png", cmd.output_dir, page_number);
-                render::screenshot(&cmd.file, page_number, cmd.dpi, &output_path)?;
+            for result in results {
+                let output_path = format!("{}/page_{}.png", cmd.output_dir, result.page_num);
+                std::fs::write(&output_path, &result.image_bytes)?;
                 if !cmd.quiet {
                     eprintln!(
                         "[liteparse] screenshot page {} → {}",
-                        page_number, output_path
+                        result.page_num, output_path
                     );
                 }
             }
