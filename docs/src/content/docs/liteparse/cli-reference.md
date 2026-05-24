@@ -115,7 +115,7 @@ lit batch-parse ./documents ./output --format json --no-ocr
 
 ## `lit screenshot`
 
-Generate page images from a PDF.
+Generate page images from a document (PDF, DOCX, XLSX, images, etc.).
 
 ```
 lit screenshot [options] <file>
@@ -125,7 +125,7 @@ lit screenshot [options] <file>
 
 | Argument | Description |
 |----------|-------------|
-| `file` | Path to the PDF file |
+| `file` | Path to the document file |
 
 ### Options
 
@@ -140,8 +140,11 @@ lit screenshot [options] <file>
 ### Examples
 
 ```bash
-# Screenshot all pages
+# Screenshot all pages of a PDF
 lit screenshot document.pdf -o ./pages
+
+# Screenshot a Word document (requires LibreOffice)
+lit screenshot report.docx -o ./pages
 
 # First 5 pages at high DPI
 lit screenshot document.pdf --target-pages "1-5" --dpi 300 -o ./pages
