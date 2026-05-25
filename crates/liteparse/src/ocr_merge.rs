@@ -1,10 +1,19 @@
 use std::sync::Arc;
 
 use crate::error::LiteParseError;
+use crate::extract::load_document_from_input;
 use crate::ocr::{OcrEngine, OcrOptions, OcrResult};
 use crate::types::{Page, PdfInput, TextItem};
 use image::{ImageBuffer, Rgba};
-use pdfium::Library;
+use pdfium::Document;
+
+/// Owned page bitmap prepared for OCR. Indices refer to positions in the `pages` slice.
+pub(crate) struct RenderedPage {
+    pub idx: usize,
+    pub rgb_bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
 
 /// Run OCR on pages that need it and merge results into text_items.
 ///
@@ -25,6 +34,7 @@ pub async fn ocr_and_merge_pages(
         ocr_engine,
         ocr_language,
         num_workers,
+        None,
     )
     .await
 }
@@ -40,59 +50,64 @@ pub async fn ocr_and_merge_pages_from_input(
     ocr_engine: Arc<dyn OcrEngine>,
     ocr_language: &str,
     num_workers: usize,
+    password: Option<&str>,
 ) -> Result<(), LiteParseError> {
-    // Phase 1: render all pages that need OCR. The pdfium `Document` holds raw
-    // pointers that are not `Send`, so we must not hold it across an `.await`.
-    // Render synchronously into owned buffers and drop the document before
-    // awaiting the OCR engine.
-    struct RenderedPage {
-        idx: usize,
-        rgb_bytes: Vec<u8>,
-        width: u32,
-        height: u32,
-    }
+    let document = load_document_from_input(input, password)?;
+    let rendered = render_pages_for_ocr(&document, pages, dpi)?;
+    ocr_and_merge_rendered(pages, rendered, dpi, ocr_engine, ocr_language, num_workers).await
+}
 
-    let rendered: Vec<RenderedPage> = {
-        let lib = Library::init();
-        let document = match input {
-            PdfInput::Path(path) => lib.load_document(path, None)?,
-            PdfInput::Bytes(data) => lib.load_document_from_bytes(data, None)?,
-        };
+/// Render pages that need OCR from an already-open document.
+///
+/// The pdfium `Document` holds raw pointers that are not `Send`, so callers must
+/// drop it before awaiting the OCR engine.
+pub(crate) fn render_pages_for_ocr(
+    document: &Document,
+    pages: &[Page],
+    dpi: f32,
+) -> Result<Vec<RenderedPage>, LiteParseError> {
+    let mut rendered = Vec::new();
+    for (idx, page) in pages.iter().enumerate() {
+        let text_length: usize = page.text_items.iter().map(|item| item.text.len()).sum();
+        let page_obj = document.page((page.page_number - 1) as i32)?;
+        let has_images = !page_obj.image_bounds(25.0, 0.9).is_empty();
 
-        let mut rendered = Vec::new();
-        for (idx, page) in pages.iter().enumerate() {
-            let text_length: usize = page.text_items.iter().map(|item| item.text.len()).sum();
-            let page_obj = document.page((page.page_number - 1) as i32)?;
-            let has_images = !page_obj.image_bounds(25.0, 0.9).is_empty();
-
-            if text_length >= 100 && !has_images {
-                continue;
-            }
-
-            let bitmap = page_obj.render(dpi)?;
-            let width = bitmap.width() as u32;
-            let height = bitmap.height() as u32;
-            let rgba = bitmap.to_rgba();
-
-            let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, rgba)
-                .ok_or(LiteParseError::Other(
-                    "failed to create image buffer".into(),
-                ))?;
-            let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
-            let rgb_bytes = rgb_img.into_raw();
-
-            rendered.push(RenderedPage {
-                idx,
-                rgb_bytes,
-                width,
-                height,
-            });
+        if text_length >= 100 && !has_images {
+            continue;
         }
-        rendered
-        // `document` and `lib` are dropped here before any `.await`
-    };
 
-    // Phase 2: spawn OCR tasks onto the tokio runtime so they run on
+        let bitmap = page_obj.render(dpi)?;
+        let width = bitmap.width() as u32;
+        let height = bitmap.height() as u32;
+        let rgba = bitmap.to_rgba();
+
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, rgba)
+            .ok_or(LiteParseError::Other(
+                "failed to create image buffer".into(),
+            ))?;
+        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
+        let rgb_bytes = rgb_img.into_raw();
+
+        rendered.push(RenderedPage {
+            idx,
+            rgb_bytes,
+            width,
+            height,
+        });
+    }
+    Ok(rendered)
+}
+
+/// Run OCR on pre-rendered page bitmaps and merge results into `pages`.
+pub(crate) async fn ocr_and_merge_rendered(
+    pages: &mut [Page],
+    rendered: Vec<RenderedPage>,
+    dpi: f32,
+    ocr_engine: Arc<dyn OcrEngine>,
+    ocr_language: &str,
+    num_workers: usize,
+) -> Result<(), LiteParseError> {
+    // Phase 1: spawn OCR tasks onto the tokio runtime so they run on
     // separate threads. A semaphore limits concurrency to `num_workers`.
     let num_workers = num_workers.max(1);
     let semaphore = Arc::new(tokio::sync::Semaphore::new(num_workers));

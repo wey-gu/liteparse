@@ -1,6 +1,18 @@
 use crate::error::LiteParseError;
 use crate::types::{Page as LitePage, PdfInput, TextItem};
-use pdfium::{Font, FontType, Library, Page, RectF, TextPage};
+use pdfium::{Document, Font, FontType, Library, Page, RectF, TextPage};
+
+/// Open a PDF from path or bytes with an optional password.
+pub(crate) fn load_document_from_input(
+    input: &PdfInput,
+    password: Option<&str>,
+) -> Result<Document, LiteParseError> {
+    let lib = Library::init();
+    match input {
+        PdfInput::Path(path) => Ok(lib.load_document(path, password)?),
+        PdfInput::Bytes(data) => Ok(lib.load_document_from_bytes(data, password)?),
+    }
+}
 
 /// Extract pages from a PDF file and return them as structured data.
 pub fn extract_pages(
@@ -38,11 +50,16 @@ pub fn extract_pages_from_input(
     max_pages: usize,
     password: Option<&str>,
 ) -> Result<Vec<LitePage>, LiteParseError> {
-    let lib = Library::init();
-    let document = match input {
-        PdfInput::Path(path) => lib.load_document(path, password)?,
-        PdfInput::Bytes(data) => lib.load_document_from_bytes(data, password)?,
-    };
+    let document = load_document_from_input(input, password)?;
+    extract_pages_from_document(&document, target_pages, max_pages)
+}
+
+/// Extract pages from an already-open PDFium document.
+pub(crate) fn extract_pages_from_document(
+    document: &Document,
+    target_pages: Option<&[u32]>,
+    max_pages: usize,
+) -> Result<Vec<LitePage>, LiteParseError> {
     let page_count = document.page_count();
     let mut pages = Vec::new();
 
