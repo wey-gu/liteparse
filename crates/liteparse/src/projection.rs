@@ -1509,7 +1509,7 @@ fn project_to_grid(
     page: &Page,
     mut projection_boxes: Vec<ProjectedTextItem>,
 ) -> (Vec<ProjectedTextItem>, String) {
-    // Step 1a: Filter out items that are purely dots
+    // Filter out items that are purely dots
     let mut dot_count = 0usize;
     projection_boxes.iter().for_each(|item| {
         if item
@@ -1532,19 +1532,19 @@ fn project_to_grid(
         });
     }
 
-    // Step 1b: Round dimensions
+    // Round dimensions
     for item in projection_boxes.iter_mut() {
         item.item.width = item.item.width.round();
         item.item.height = item.item.height.round();
     }
 
-    // Step 1c: Compute median distances
+    // Compute median distances
     let (median_width, median_height) = compute_median_textbox_size(&projection_boxes);
 
-    // Step 1d: Handle reading order rotations
+    // Handle reading order rotations
     handle_rotation_reading_order(&mut projection_boxes, page.page_height);
 
-    // Step 1e: Form lines of boxes
+    // Form lines of boxes
     let mut lines = form_lines(
         &mut projection_boxes,
         median_width,
@@ -1555,7 +1555,7 @@ fn project_to_grid(
         return (Vec::new(), String::new());
     }
 
-    // Step 2: Segment into blocks
+    // Segment into blocks
     let blocks = segment_blocks(&lines);
 
     let debug = std::env::var("LITEPARSE_DEBUG").is_ok();

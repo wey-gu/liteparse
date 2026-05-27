@@ -1,6 +1,6 @@
 [package]
 name = "liteparse-pdfium-sys"
-version = "1.0.0"
+version = "1.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -10,6 +10,9 @@ links = "pdfium"
 [features]
 default = []
 bindgen = ["dep:bindgen"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libloading = "0.8"
 
 [build-dependencies]
 bindgen = { version = "0.71", optional = true }

@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use crate::ffi;
 use crate::page::Page;
 use crate::types::{CharBox, Color, Matrix, RectF, TextRect};
 
@@ -10,7 +11,7 @@ pub struct TextPage<'page> {
 
 impl TextPage<'_> {
     pub fn char_count(&self) -> i32 {
-        unsafe { pdfium_sys::FPDFText_CountChars(self.handle) }
+        unsafe { ffi!(FPDFText_CountChars(self.handle)) }
     }
 
     pub fn chars(&self) -> TextCharIter<'_> {
@@ -44,7 +45,7 @@ impl TextPage<'_> {
     /// Count rectangular areas occupied by a text segment.
     /// Must be called before `rect()`.
     pub fn count_rects(&self, start: i32, count: i32) -> i32 {
-        unsafe { pdfium_sys::FPDFText_CountRects(self.handle, start, count) }
+        unsafe { ffi!(FPDFText_CountRects(self.handle, start, count)) }
     }
 
     /// Get a rectangle from the last `count_rects()` call.
@@ -54,14 +55,14 @@ impl TextPage<'_> {
         let mut right = 0.0;
         let mut bottom = 0.0;
         let ok = unsafe {
-            pdfium_sys::FPDFText_GetRect(
+            ffi!(FPDFText_GetRect(
                 self.handle,
                 index,
                 &mut left,
                 &mut top,
                 &mut right,
                 &mut bottom,
-            )
+            ))
         };
         if ok != 0 {
             Some(TextRect {
@@ -79,7 +80,7 @@ impl TextPage<'_> {
     pub fn bounded_text(&self, left: f64, top: f64, right: f64, bottom: f64) -> String {
         // First call to get required buffer length (in UTF-16 code units, excluding terminator)
         let len = unsafe {
-            pdfium_sys::FPDFText_GetBoundedText(
+            ffi!(FPDFText_GetBoundedText(
                 self.handle,
                 left,
                 top,
@@ -87,7 +88,7 @@ impl TextPage<'_> {
                 bottom,
                 std::ptr::null_mut(),
                 0,
-            )
+            ))
         };
         if len <= 0 {
             return String::new();
@@ -97,7 +98,7 @@ impl TextPage<'_> {
         let buf_len = len + 1;
         let mut buf: Vec<u16> = vec![0; buf_len as usize];
         let written = unsafe {
-            pdfium_sys::FPDFText_GetBoundedText(
+            ffi!(FPDFText_GetBoundedText(
                 self.handle,
                 left,
                 top,
@@ -105,7 +106,7 @@ impl TextPage<'_> {
                 bottom,
                 buf.as_mut_ptr(),
                 buf_len,
-            )
+            ))
         };
 
         if written <= 0 {
@@ -129,8 +130,14 @@ impl TextPage<'_> {
         }
         let buf_len = count + 1; // +1 for terminator
         let mut buf: Vec<u16> = vec![0; buf_len as usize];
-        let written =
-            unsafe { pdfium_sys::FPDFText_GetText(self.handle, start, count, buf.as_mut_ptr()) };
+        let written = unsafe {
+            ffi!(FPDFText_GetText(
+                self.handle,
+                start,
+                count,
+                buf.as_mut_ptr()
+            ))
+        };
         if written <= 0 {
             return String::new();
         }
@@ -145,7 +152,7 @@ impl TextPage<'_> {
 
 impl Drop for TextPage<'_> {
     fn drop(&mut self) {
-        unsafe { pdfium_sys::FPDFText_ClosePage(self.handle) };
+        unsafe { ffi!(FPDFText_ClosePage(self.handle)) };
     }
 }
 
@@ -158,47 +165,47 @@ pub struct TextChar<'tp> {
 
 impl TextChar<'_> {
     pub fn unicode(&self) -> u32 {
-        unsafe { pdfium_sys::FPDFText_GetUnicode(self.text_page.handle, self.index) }
+        unsafe { ffi!(FPDFText_GetUnicode(self.text_page.handle, self.index)) }
     }
 
     /// Raw character code from the PDF content stream (not Unicode).
     /// Only meaningful for non-generated characters.
     pub fn char_code(&self) -> u32 {
-        unsafe { pdfium_sys::FPDFText_GetCharCode(self.text_page.handle, self.index) }
+        unsafe { ffi!(FPDFText_GetCharCode(self.text_page.handle, self.index)) }
     }
 
     pub fn font_size(&self) -> f64 {
-        unsafe { pdfium_sys::FPDFText_GetFontSize(self.text_page.handle, self.index) }
+        unsafe { ffi!(FPDFText_GetFontSize(self.text_page.handle, self.index)) }
     }
 
     pub fn font_weight(&self) -> i32 {
-        unsafe { pdfium_sys::FPDFText_GetFontWeight(self.text_page.handle, self.index) }
+        unsafe { ffi!(FPDFText_GetFontWeight(self.text_page.handle, self.index)) }
     }
 
     /// Get font info name and flags. Returns (name, flags) or None.
     pub fn font_info(&self) -> Option<(String, i32)> {
         let mut flags: i32 = 0;
         let len = unsafe {
-            pdfium_sys::FPDFText_GetFontInfo(
+            ffi!(FPDFText_GetFontInfo(
                 self.text_page.handle,
                 self.index,
                 std::ptr::null_mut(),
                 0,
                 &mut flags,
-            )
+            ))
         };
         if len == 0 {
             return None;
         }
         let mut buf: Vec<u8> = vec![0; len as usize];
         let written = unsafe {
-            pdfium_sys::FPDFText_GetFontInfo(
+            ffi!(FPDFText_GetFontInfo(
                 self.text_page.handle,
                 self.index,
                 buf.as_mut_ptr() as *mut std::ffi::c_void,
                 len,
                 &mut flags,
-            )
+            ))
         };
         if written == 0 {
             return None;
@@ -217,12 +224,12 @@ impl TextChar<'_> {
 
     /// Angle in radians. Returns -1 on error.
     pub fn angle(&self) -> f32 {
-        unsafe { pdfium_sys::FPDFText_GetCharAngle(self.text_page.handle, self.index) }
+        unsafe { ffi!(FPDFText_GetCharAngle(self.text_page.handle, self.index)) }
     }
 
     /// Get the FPDF_PAGEOBJECT for this character (for font/color extraction).
     pub fn text_object(&self) -> Option<pdfium_sys::FPDF_PAGEOBJECT> {
-        let obj = unsafe { pdfium_sys::FPDFText_GetTextObject(self.text_page.handle, self.index) };
+        let obj = unsafe { ffi!(FPDFText_GetTextObject(self.text_page.handle, self.index)) };
         if obj.is_null() { None } else { Some(obj) }
     }
 
@@ -233,14 +240,14 @@ impl TextChar<'_> {
         let mut b = 0u32;
         let mut a = 0u32;
         let ok = unsafe {
-            pdfium_sys::FPDFText_GetStrokeColor(
+            ffi!(FPDFText_GetStrokeColor(
                 self.text_page.handle,
                 self.index,
                 &mut r,
                 &mut g,
                 &mut b,
                 &mut a,
-            )
+            ))
         };
         if ok != 0 {
             Some(Color {
@@ -261,14 +268,14 @@ impl TextChar<'_> {
         let mut b = 0u32;
         let mut a = 0u32;
         let ok = unsafe {
-            pdfium_sys::FPDFText_GetFillColor(
+            ffi!(FPDFText_GetFillColor(
                 self.text_page.handle,
                 self.index,
                 &mut r,
                 &mut g,
                 &mut b,
                 &mut a,
-            )
+            ))
         };
         if ok != 0 {
             Some(Color {
@@ -286,14 +293,14 @@ impl TextChar<'_> {
     /// Returns the raw FPDF_TEXT_RENDERMODE value (0=fill, 1=stroke, 2=fill+stroke, 3=invisible, etc.)
     pub fn text_render_mode(&self) -> Option<i32> {
         let obj = self.text_object()?;
-        let mode = unsafe { pdfium_sys::FPDFTextObj_GetTextRenderMode(obj) };
+        let mode = unsafe { ffi!(FPDFTextObj_GetTextRenderMode(obj)) };
         if mode >= 0 { Some(mode) } else { None }
     }
 
     /// Get marked content ID from the page object (-1 if none).
     pub fn marked_content_id(&self) -> Option<i32> {
         let obj = self.text_object()?;
-        let mcid = unsafe { pdfium_sys::FPDFPageObj_GetMarkedContentID(obj) };
+        let mcid = unsafe { ffi!(FPDFPageObj_GetMarkedContentID(obj)) };
         if mcid >= 0 { Some(mcid) } else { None }
     }
 
@@ -303,14 +310,14 @@ impl TextChar<'_> {
         let mut bottom = 0.0;
         let mut top = 0.0;
         let ok = unsafe {
-            pdfium_sys::FPDFText_GetCharBox(
+            ffi!(FPDFText_GetCharBox(
                 self.text_page.handle,
                 self.index,
                 &mut left,
                 &mut right,
                 &mut bottom,
                 &mut top,
-            )
+            ))
         };
         if ok != 0 {
             Some(CharBox {
@@ -332,7 +339,11 @@ impl TextChar<'_> {
             bottom: 0.0,
         };
         let ok = unsafe {
-            pdfium_sys::FPDFText_GetLooseCharBox(self.text_page.handle, self.index, &mut rect)
+            ffi!(FPDFText_GetLooseCharBox(
+                self.text_page.handle,
+                self.index,
+                &mut rect
+            ))
         };
         if ok != 0 {
             Some(RectF {
@@ -355,8 +366,13 @@ impl TextChar<'_> {
             e: 0.0,
             f: 0.0,
         };
-        let ok =
-            unsafe { pdfium_sys::FPDFText_GetMatrix(self.text_page.handle, self.index, &mut m) };
+        let ok = unsafe {
+            ffi!(FPDFText_GetMatrix(
+                self.text_page.handle,
+                self.index,
+                &mut m
+            ))
+        };
         if ok != 0 {
             Some(Matrix {
                 a: m.a,
@@ -372,11 +388,16 @@ impl TextChar<'_> {
     }
 
     pub fn is_generated(&self) -> bool {
-        unsafe { pdfium_sys::FPDFText_IsGenerated(self.text_page.handle, self.index) == 1 }
+        unsafe { ffi!(FPDFText_IsGenerated(self.text_page.handle, self.index)) == 1 }
     }
 
     pub fn has_unicode_map_error(&self) -> bool {
-        unsafe { pdfium_sys::FPDFText_HasUnicodeMapError(self.text_page.handle, self.index) == 1 }
+        unsafe {
+            ffi!(FPDFText_HasUnicodeMapError(
+                self.text_page.handle,
+                self.index
+            )) == 1
+        }
     }
 }
 

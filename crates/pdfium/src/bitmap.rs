@@ -1,4 +1,5 @@
 use crate::error::PdfiumError;
+use crate::ffi;
 
 pub struct Bitmap {
     handle: pdfium_sys::FPDF_BITMAP,
@@ -16,13 +17,13 @@ impl Bitmap {
     /// Create a new BGRA bitmap with the given dimensions.
     pub fn new(width: i32, height: i32) -> Result<Self, PdfiumError> {
         let handle = unsafe {
-            pdfium_sys::FPDFBitmap_CreateEx(
+            ffi!(FPDFBitmap_CreateEx(
                 width,
                 height,
                 pdfium_sys::FPDFBitmap_BGRA as i32,
                 std::ptr::null_mut(),
                 0, // stride=0 lets pdfium choose
-            )
+            ))
         };
         if handle.is_null() {
             return Err(PdfiumError::OperationFailed);
@@ -35,21 +36,21 @@ impl Bitmap {
     }
 
     pub fn width(&self) -> i32 {
-        unsafe { pdfium_sys::FPDFBitmap_GetWidth(self.handle) }
+        unsafe { ffi!(FPDFBitmap_GetWidth(self.handle)) }
     }
 
     pub fn height(&self) -> i32 {
-        unsafe { pdfium_sys::FPDFBitmap_GetHeight(self.handle) }
+        unsafe { ffi!(FPDFBitmap_GetHeight(self.handle)) }
     }
 
     pub fn stride(&self) -> i32 {
-        unsafe { pdfium_sys::FPDFBitmap_GetStride(self.handle) }
+        unsafe { ffi!(FPDFBitmap_GetStride(self.handle)) }
     }
 
     /// Fill a rectangle with an ARGB color (0xAARRGGBB).
     pub fn fill_rect(&self, left: i32, top: i32, width: i32, height: i32, color: u64) {
         unsafe {
-            pdfium_sys::FPDFBitmap_FillRect(
+            ffi!(FPDFBitmap_FillRect(
                 self.handle,
                 left,
                 top,
@@ -58,14 +59,14 @@ impl Bitmap {
                 // necessary for windows -> expected `u32`, found `u64`
                 #[allow(clippy::useless_conversion)]
                 color.try_into().unwrap(),
-            );
+            ));
         }
     }
 
     /// Get the raw pixel buffer as a byte slice.
     /// Format is BGRA, row-major, with `stride()` bytes per row.
     pub fn buffer(&self) -> &[u8] {
-        let ptr = unsafe { pdfium_sys::FPDFBitmap_GetBuffer(self.handle) };
+        let ptr = unsafe { ffi!(FPDFBitmap_GetBuffer(self.handle)) };
         let len = (self.stride() * self.height()) as usize;
         unsafe { std::slice::from_raw_parts(ptr as *const u8, len) }
     }
@@ -95,6 +96,6 @@ impl Bitmap {
 
 impl Drop for Bitmap {
     fn drop(&mut self) {
-        unsafe { pdfium_sys::FPDFBitmap_Destroy(self.handle) };
+        unsafe { ffi!(FPDFBitmap_Destroy(self.handle)) };
     }
 }
