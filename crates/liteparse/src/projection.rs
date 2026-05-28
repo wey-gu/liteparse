@@ -68,18 +68,19 @@ fn compute_median_textbox_size(items: &[ProjectedTextItem]) -> (f32, f32) {
     widths.sort_by(|a, b| a.total_cmp(b));
     heights.sort_by(|a, b| a.total_cmp(b));
 
-    let mid = widths.len() / 2;
+    let width_mid = widths.len() / 2;
+    let height_mid = heights.len() / 2;
 
     let median_width = if widths.len().is_multiple_of(2) {
-        (widths[mid - 1] + widths[mid]) / 2.0
+        (widths[width_mid - 1] + widths[width_mid]) / 2.0
     } else {
-        widths[mid]
+        widths[width_mid]
     };
 
     let median_height = if heights.len().is_multiple_of(2) {
-        (heights[mid - 1] + heights[mid]) / 2.0
+        (heights[height_mid - 1] + heights[height_mid]) / 2.0
     } else {
-        heights[mid]
+        heights[height_mid]
     };
 
     (median_width, median_height)
@@ -1509,6 +1510,10 @@ fn project_to_grid(
     page: &Page,
     mut projection_boxes: Vec<ProjectedTextItem>,
 ) -> (Vec<ProjectedTextItem>, String) {
+    if projection_boxes.is_empty() {
+        return (Vec::new(), String::new());
+    }
+
     // Filter out items that are purely dots
     let mut dot_count = 0usize;
     projection_boxes.iter().for_each(|item| {
@@ -2661,4 +2666,65 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projected_item(text: &str, y: f32, width: f32, height: f32) -> ProjectedTextItem {
+        ProjectedTextItem {
+            item: TextItem {
+                text: text.to_string(),
+                x: 10.0,
+                y,
+                width,
+                height,
+                ..Default::default()
+            },
+            snap: Snap::Left,
+            anchor: Anchor::Left,
+            is_dup: false,
+            rendered: false,
+            num_spaces: 0,
+            force_unsnapped: false,
+            is_margin_line_number: false,
+            rotated: false,
+            d: 0.0,
+        }
+    }
+
+    #[test]
+    fn project_to_grid_handles_text_sparse_zero_width_items() {
+        let page = Page {
+            page_number: 1,
+            page_width: 612.0,
+            page_height: 792.0,
+            text_items: Vec::new(),
+        };
+        let projection_boxes = vec![
+            projected_item("", 10.0, 0.0, 10.0),
+            projected_item("", 30.0, 0.0, 20.0),
+        ];
+
+        let (_, text) = project_to_grid(&page, projection_boxes);
+
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn project_pages_to_grid_handles_page_with_no_text_items() {
+        let pages = vec![Page {
+            page_number: 1,
+            page_width: 612.0,
+            page_height: 792.0,
+            text_items: Vec::new(),
+        }];
+
+        let parsed = project_pages_to_grid(pages);
+
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].text.is_empty());
+        assert!(parsed[0].text_items.is_empty());
+    }
 }
