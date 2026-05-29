@@ -197,14 +197,9 @@ jobs:
       - name: Smoke test (musl container)
         if: ${{ matrix.use-container }}
         run: |
+          chmod +x scripts/smoke-test-musl-node.sh
           docker run --rm \
             -v "$GITHUB_WORKSPACE":/work \
             -w /work/packages/node \
             node:20-alpine \
-            node -e "
-              import('./dist/lib.js').then(async ({ LiteParse }) => {
-                const p = new LiteParse({ ocrEnabled: false, quiet: true });
-                console.log('Config:', JSON.stringify(p.getConfig()));
-                console.log('Native module loaded successfully');
-              });
-            "
+            /work/scripts/smoke-test-musl-node.sh
