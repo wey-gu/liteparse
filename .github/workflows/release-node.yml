@@ -118,7 +118,7 @@ jobs:
       - name: Build native module (musl container)
         if: ${{ matrix.use-container }}
         run: |
-          chmod +x scripts/build-alpine.sh
+          chmod +x scripts/build-musl-node.sh
           docker run --rm \
             -v "$GITHUB_WORKSPACE":/work \
             -v "$HOME/.cargo/registry":/root/.cargo/registry \
@@ -126,7 +126,7 @@ jobs:
             -v "$HOME/.cache/pdfium-rs":/root/.cache/pdfium-rs \
             -w /work/packages/node \
             node:20-alpine \
-            /work/scripts/build-alpine.sh
+            /work/scripts/build-musl-node.sh
 
       - name: Copy pdfium dylib (Unix)
         if: runner.os != 'Windows'
