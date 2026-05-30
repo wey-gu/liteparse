@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: 20
 
-      - uses: dtolnay/dtolnay/rust-toolchain@1.95.0
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: wasm32-unknown-unknown
 
