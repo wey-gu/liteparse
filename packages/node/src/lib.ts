@@ -12,7 +12,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export type LiteParseInput = string | Buffer | Uint8Array;
-export type OutputFormat = "json" | "text";
+export type OutputFormat = "json" | "text" | "markdown";
 
 export interface LiteParseConfig {
   ocrLanguage: string;

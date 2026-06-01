@@ -15,7 +15,7 @@ program
   .description("Parse a document and extract text")
   .argument("<file>", "Path to the document file")
   .option("-o, --output <file>", "Output file path")
-  .option("--format <format>", 'Output format: json|text (default: "text")')
+  .option("--format <format>", 'Output format: json|text|markdown (default: "text")')
   .option("--ocr-server-url <url>", "HTTP OCR server URL")
   .option("--no-ocr", "Disable OCR")
   .option("--ocr-language <lang>", "OCR language (default: eng)")
@@ -43,7 +43,7 @@ program
       }
 
       // CLI options override config file
-      if (opts.format) config.outputFormat = opts.format as "json" | "text";
+      if (opts.format) config.outputFormat = opts.format as "json" | "text" | "markdown";
       if (opts.ocrServerUrl)
         config.ocrServerUrl = opts.ocrServerUrl as string;
       if (opts.ocr === false) config.ocrEnabled = false;
@@ -160,7 +160,7 @@ program
   .description("Parse multiple documents in batch mode")
   .argument("<input-dir>", "Input directory")
   .argument("<output-dir>", "Output directory")
-  .option("--format <format>", 'Output format: json|text (default: "text")')
+  .option("--format <format>", 'Output format: json|text|markdown (default: "text")')
   .option("--no-ocr", "Disable OCR")
   .option("--ocr-language <lang>", "OCR language (default: eng)")
   .option("--ocr-server-url <url>", "HTTP OCR server URL")
@@ -180,7 +180,7 @@ program
       try {
         const config: Partial<LiteParseConfig> = {};
         const format = (opts.format as string) ?? "text";
-        config.outputFormat = format as "json" | "text";
+        config.outputFormat = format as "json" | "text" | "markdown";
         if (opts.ocr === false) config.ocrEnabled = false;
         if (opts.ocrLanguage) config.ocrLanguage = opts.ocrLanguage as string;
         if (opts.ocrServerUrl)
@@ -192,7 +192,7 @@ program
         if (opts.numWorkers) config.numWorkers = opts.numWorkers as number;
 
         const parser = new LiteParse(config);
-        const outExt = format === "json" ? ".json" : ".txt";
+        const outExt = format === "json" ? ".json" : format === "markdown" ? ".md" : ".txt";
 
         mkdirSync(outputDir, { recursive: true });
 

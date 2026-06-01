@@ -105,7 +105,11 @@ fn parse_output_format(s: &str) -> Result<OutputFormat, String> {
     match s.to_lowercase().as_str() {
         "json" => Ok(OutputFormat::Json),
         "text" => Ok(OutputFormat::Text),
-        _ => Err(format!("unknown format '{}', expected 'json' or 'text'", s)),
+        "markdown" | "md" => Ok(OutputFormat::Markdown),
+        _ => Err(format!(
+            "unknown format '{}', expected 'json', 'text', or 'markdown'",
+            s
+        )),
     }
 }
 
@@ -139,6 +143,7 @@ pub fn run_cli(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             let formatted = match lp.config().output_format {
                 OutputFormat::Json => json::format_json(&result.pages)?,
                 OutputFormat::Text => text::format_text(&result.pages),
+                OutputFormat::Markdown => result.text.clone(),
             };
             match cmd.output {
                 Some(path) => {
@@ -213,10 +218,10 @@ pub fn run_cli(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let lp = LiteParse::new(config);
-            let out_ext = if format == OutputFormat::Json {
-                "json"
-            } else {
-                "txt"
+            let out_ext = match format {
+                OutputFormat::Json => "json",
+                OutputFormat::Markdown => "md",
+                OutputFormat::Text => "txt",
             };
 
             std::fs::create_dir_all(&cmd.output_dir)?;
@@ -252,6 +257,7 @@ pub fn run_cli(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
                                     json::format_json(&result.pages).map_err(|e| e.into())
                                 }
                                 OutputFormat::Text => Ok(text::format_text(&result.pages)),
+                                OutputFormat::Markdown => Ok(result.text.clone()),
                             };
                         match fmt_result {
                             Ok(formatted) => {

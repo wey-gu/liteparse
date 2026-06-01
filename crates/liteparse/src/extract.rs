@@ -1,6 +1,6 @@
 use crate::error::LiteParseError;
-use crate::types::{Page as LitePage, PdfInput, TextItem};
-use pdfium::{Document, Font, FontType, Library, Page, RectF, TextPage};
+use crate::types::{GraphicPrimitive, Page as LitePage, PdfInput, Rect, TextItem};
+use pdfium::{Document, Font, FontType, Library, Page, PathObject, RectF, SegmentKind, TextPage};
 
 /// Open a PDF from path or bytes with an optional password.
 pub(crate) fn load_document_from_input(
@@ -56,12 +56,14 @@ pub(crate) fn extract_pages_from_document(
             bottom: 0.0,
         });
         let text_items = extract_page_text_items(&page, &text_page, &view_box)?;
+        let graphics = extract_page_graphics(&page, &view_box);
 
         pages.push(LitePage {
             page_number: page_number as usize,
             page_width: page.width(),
             page_height: page.height(),
             text_items,
+            graphics,
         });
     }
 
@@ -133,6 +135,90 @@ fn should_skip_invisible(text_page: &TextPage, char_count: i32) -> bool {
     let total = visible + invisible;
     let invisible_ratio = invisible as f64 / total as f64;
     invisible_ratio < 0.3
+}
+
+/// Extract simplified vector graphics from a page. We keep only what the
+/// markdown layout pass cares about:
+///   - filled paths → a single bounding `Rect` (covers cell backgrounds /
+///     code-block fills / banner fills regardless of internal complexity);
+///   - stroked paths → one `Stroke` per `LineTo` between consecutive points,
+///     plus the implicit closing stroke when a subpath has its close flag set.
+/// BezierTo segments don't emit strokes (we just advance the current point so
+/// later LineTos start from the right place).
+fn extract_page_graphics(page: &Page, view_box: &RectF) -> Vec<GraphicPrimitive> {
+    let paths: Vec<PathObject> = page.path_objects(view_box);
+    let mut out = Vec::new();
+
+    for path in &paths {
+        // Filled paths: emit one Rect for the full bbox. Cheap signal for
+        // cell backgrounds / figure clusters / code-block fills.
+        if path.is_filled {
+            out.push(GraphicPrimitive::Rect {
+                bbox: rectf_to_rect(&path.bbox),
+                fill: path.fill_color.as_ref().map(color_to_argb_hex),
+                stroke: path.stroke_color.as_ref().map(color_to_argb_hex),
+            });
+        }
+
+        if !path.is_stroked {
+            continue;
+        }
+
+        // Stroked paths: walk segments and emit one Stroke per LineTo.
+        let color = path.stroke_color.as_ref().map(color_to_argb_hex);
+        let mut current: Option<(f32, f32)> = None;
+        let mut subpath_start: Option<(f32, f32)> = None;
+
+        for seg in &path.segments {
+            match seg.kind {
+                SegmentKind::MoveTo => {
+                    current = Some((seg.x, seg.y));
+                    subpath_start = Some((seg.x, seg.y));
+                }
+                SegmentKind::LineTo => {
+                    if let Some((px, py)) = current {
+                        out.push(GraphicPrimitive::Stroke {
+                            x1: px,
+                            y1: py,
+                            x2: seg.x,
+                            y2: seg.y,
+                            color: color.clone(),
+                            width: path.stroke_width,
+                        });
+                    }
+                    current = Some((seg.x, seg.y));
+                    if seg.close
+                        && let (Some((cx, cy)), Some((sx, sy))) = (current, subpath_start)
+                        && (cx - sx).hypot(cy - sy) > 0.01
+                    {
+                        out.push(GraphicPrimitive::Stroke {
+                            x1: cx,
+                            y1: cy,
+                            x2: sx,
+                            y2: sy,
+                            color: color.clone(),
+                            width: path.stroke_width,
+                        });
+                    }
+                }
+                SegmentKind::BezierTo => {
+                    // Don't synthesize a stroke for a curve; just advance.
+                    current = Some((seg.x, seg.y));
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn rectf_to_rect(r: &RectF) -> Rect {
+    Rect {
+        x: r.left,
+        y: r.top,
+        width: r.right - r.left,
+        height: r.bottom - r.top,
+    }
 }
 
 /// Character-level text extraction.

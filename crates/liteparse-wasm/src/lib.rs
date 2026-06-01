@@ -78,9 +78,10 @@ impl JsLiteParseConfig {
             cfg.output_format = match v.as_str() {
                 "json" => OutputFormat::Json,
                 "text" => OutputFormat::Text,
+                "markdown" | "md" => OutputFormat::Markdown,
                 other => {
                     return Err(JsError::new(&format!(
-                        "invalid outputFormat: {} (expected 'json' or 'text')",
+                        "invalid outputFormat: {} (expected 'json', 'text', or 'markdown')",
                         other
                     )));
                 }
@@ -111,6 +112,7 @@ impl JsLiteParseConfig {
             output_format: Some(match cfg.output_format {
                 OutputFormat::Json => "json".into(),
                 OutputFormat::Text => "text".into(),
+                OutputFormat::Markdown => "markdown".into(),
             }),
             preserve_very_small_text: Some(cfg.preserve_very_small_text),
             password: cfg.password.clone(),

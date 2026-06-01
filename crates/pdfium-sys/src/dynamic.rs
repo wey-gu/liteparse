@@ -72,6 +72,34 @@ pub struct PdfiumBindings {
         unsafe extern "C" fn(FPDF_PAGEOBJECT) -> std::os::raw::c_int,
     pub FPDFImageObj_GetRenderedBitmap:
         unsafe extern "C" fn(FPDF_DOCUMENT, FPDF_PAGE, FPDF_PAGEOBJECT) -> FPDF_BITMAP,
+    pub FPDFPageObj_GetMatrix: unsafe extern "C" fn(FPDF_PAGEOBJECT, *mut FS_MATRIX) -> FPDF_BOOL,
+    pub FPDFPageObj_GetStrokeColor: unsafe extern "C" fn(
+        FPDF_PAGEOBJECT,
+        *mut std::os::raw::c_uint,
+        *mut std::os::raw::c_uint,
+        *mut std::os::raw::c_uint,
+        *mut std::os::raw::c_uint,
+    ) -> FPDF_BOOL,
+    pub FPDFPageObj_GetFillColor: unsafe extern "C" fn(
+        FPDF_PAGEOBJECT,
+        *mut std::os::raw::c_uint,
+        *mut std::os::raw::c_uint,
+        *mut std::os::raw::c_uint,
+        *mut std::os::raw::c_uint,
+    ) -> FPDF_BOOL,
+    pub FPDFPageObj_GetStrokeWidth: unsafe extern "C" fn(FPDF_PAGEOBJECT, *mut f32) -> FPDF_BOOL,
+    pub FPDFPath_GetDrawMode: unsafe extern "C" fn(
+        FPDF_PAGEOBJECT,
+        *mut std::os::raw::c_int,
+        *mut FPDF_BOOL,
+    ) -> FPDF_BOOL,
+    pub FPDFPath_CountSegments: unsafe extern "C" fn(FPDF_PAGEOBJECT) -> std::os::raw::c_int,
+    pub FPDFPath_GetPathSegment:
+        unsafe extern "C" fn(FPDF_PAGEOBJECT, std::os::raw::c_int) -> FPDF_PATHSEGMENT,
+    pub FPDFPathSegment_GetPoint:
+        unsafe extern "C" fn(FPDF_PATHSEGMENT, *mut f32, *mut f32) -> FPDF_BOOL,
+    pub FPDFPathSegment_GetType: unsafe extern "C" fn(FPDF_PATHSEGMENT) -> std::os::raw::c_int,
+    pub FPDFPathSegment_GetClose: unsafe extern "C" fn(FPDF_PATHSEGMENT) -> FPDF_BOOL,
 
     // -- TextPage --
     pub FPDFText_LoadPage: unsafe extern "C" fn(FPDF_PAGE) -> FPDF_TEXTPAGE,
@@ -232,6 +260,16 @@ impl PdfiumBindings {
             FPDFPageObj_GetBounds: load_fn!(lib, "FPDFPageObj_GetBounds"),
             FPDFPageObj_GetMarkedContentID: load_fn!(lib, "FPDFPageObj_GetMarkedContentID"),
             FPDFImageObj_GetRenderedBitmap: load_fn!(lib, "FPDFImageObj_GetRenderedBitmap"),
+            FPDFPageObj_GetMatrix: load_fn!(lib, "FPDFPageObj_GetMatrix"),
+            FPDFPageObj_GetStrokeColor: load_fn!(lib, "FPDFPageObj_GetStrokeColor"),
+            FPDFPageObj_GetFillColor: load_fn!(lib, "FPDFPageObj_GetFillColor"),
+            FPDFPageObj_GetStrokeWidth: load_fn!(lib, "FPDFPageObj_GetStrokeWidth"),
+            FPDFPath_GetDrawMode: load_fn!(lib, "FPDFPath_GetDrawMode"),
+            FPDFPath_CountSegments: load_fn!(lib, "FPDFPath_CountSegments"),
+            FPDFPath_GetPathSegment: load_fn!(lib, "FPDFPath_GetPathSegment"),
+            FPDFPathSegment_GetPoint: load_fn!(lib, "FPDFPathSegment_GetPoint"),
+            FPDFPathSegment_GetType: load_fn!(lib, "FPDFPathSegment_GetType"),
+            FPDFPathSegment_GetClose: load_fn!(lib, "FPDFPathSegment_GetClose"),
             FPDFText_LoadPage: load_fn!(lib, "FPDFText_LoadPage"),
             FPDFText_ClosePage: load_fn!(lib, "FPDFText_ClosePage"),
             FPDFText_CountChars: load_fn!(lib, "FPDFText_CountChars"),

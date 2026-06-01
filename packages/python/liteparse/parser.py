@@ -88,7 +88,7 @@ class LiteParse:
             max_pages: Maximum number of pages to parse
             target_pages: Specific pages to parse (e.g., "1-5,10,15-20")
             dpi: DPI for rendering (affects OCR quality)
-            output_format: Output format: "json" or "text" (default: "json")
+            output_format: Output format: "json", "text", or "markdown" (default: "json")
             preserve_very_small_text: Whether to preserve very small text
             password: Password for encrypted/protected documents
             quiet: Suppress progress output

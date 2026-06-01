@@ -35,6 +35,7 @@ pub struct LiteParseConfig {
 pub enum OutputFormat {
     Json,
     Text,
+    Markdown,
 }
 
 impl Default for LiteParseConfig {

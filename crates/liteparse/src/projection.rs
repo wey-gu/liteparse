@@ -2655,15 +2655,941 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
                 .collect();
 
             let (projected_items, text) = project_to_grid(&page, projection_boxes);
+            // Detect figure regions from the page's vector graphics before
+            // XY-cut runs so the layout recursion can treat them as obstacles
+            // (partition the page around figures rather than slicing through).
+            let figures = crate::figure_cluster::detect_figure_rects(
+                &page.graphics,
+                &page.text_items,
+                page.page_width,
+                page.page_height,
+            );
+            let (projected_lines, regions) = build_projected_lines(
+                &projected_items,
+                page.page_width,
+                page.page_height,
+                &figures,
+            );
             ParsedPage {
                 page_number: page.page_number,
                 page_width: page.page_width,
                 page_height: page.page_height,
                 text,
                 text_items: projected_items.into_iter().map(|proj| proj.item).collect(),
+                projected_lines,
+                regions,
+                graphics: page.graphics,
+                figures,
             }
         })
         .collect()
+}
+
+// ── ProjectedLine derivation ────────────────────────────────────────────────
+//
+// `build_projected_lines` groups already-projected items (in reading order)
+// into per-line structural metadata consumed by the markdown emitter. Lines
+// are grouped by y-proximity; aggregates (dominant font, all-bold/italic/mono)
+// are char-weighted across the line's items. The JSON/text outputs are
+// unaffected — `ParsedPage.projected_lines` is `#[serde(skip)]`.
+
+/// PDF font descriptor flag bits we care about.
+/// See PDF spec §9.8.2 (table 123).
+const PDF_FONT_FLAG_FIXED_PITCH: i32 = 1; // bit 1
+const PDF_FONT_FLAG_ITALIC: i32 = 64; // bit 7
+const PDF_FONT_FLAG_FORCE_BOLD: i32 = 262144; // bit 19
+
+/// Font-name substrings that indicate bold weight.
+const BOLD_NAME_HINTS: &[&str] = &["Bold", "Black", "Heavy", "Semibold", "Demibold"];
+/// Font-name substrings that indicate italic / oblique slant.
+const ITALIC_NAME_HINTS: &[&str] = &["Italic", "Oblique"];
+/// Font-name substrings that indicate a monospaced typeface.
+const MONO_NAME_HINTS: &[&str] = &[
+    "Courier",
+    "Mono",
+    "Consolas",
+    "Menlo",
+    "Source Code",
+    "Inconsolata",
+    "Hack",
+    "Fira Code",
+];
+
+fn name_contains_any(name: &str, hints: &[&str]) -> bool {
+    hints.iter().any(|h| name.contains(h))
+}
+
+pub(crate) fn is_bold_item(item: &TextItem) -> bool {
+    if let Some(flags) = item.font_flags {
+        if flags & PDF_FONT_FLAG_FORCE_BOLD != 0 {
+            return true;
+        }
+    }
+    if let Some(w) = item.font_weight {
+        if w >= 600 {
+            return true;
+        }
+    }
+    if let Some(n) = &item.font_name {
+        if name_contains_any(n, BOLD_NAME_HINTS) {
+            return true;
+        }
+    }
+    false
+}
+
+pub(crate) fn is_italic_item(item: &TextItem) -> bool {
+    if let Some(flags) = item.font_flags {
+        if flags & PDF_FONT_FLAG_ITALIC != 0 {
+            return true;
+        }
+    }
+    if let Some(n) = &item.font_name {
+        if name_contains_any(n, ITALIC_NAME_HINTS) {
+            return true;
+        }
+    }
+    false
+}
+
+pub(crate) fn is_mono_item(item: &TextItem) -> bool {
+    if let Some(flags) = item.font_flags {
+        if flags & PDF_FONT_FLAG_FIXED_PITCH != 0 {
+            return true;
+        }
+    }
+    if let Some(n) = &item.font_name {
+        if name_contains_any(n, MONO_NAME_HINTS) {
+            return true;
+        }
+    }
+    false
+}
+
+// ── XY-cut layout decomposition ─────────────────────────────────────────────
+//
+// Replaces the prior flat column detector. Recursively splits the page along H
+// or V axes at "valleys" — runs of low projection density wider than a minimum
+// threshold. Pre-order traversal of the resulting tree gives reading order
+// (top→bottom, left→right) including for nested layouts (banded splits with
+// sub-columns).
+//
+// Threshold is min-density relative to the local content's median: a cut is
+// valid if the projection density in the valley stays below T_DENS × median
+// for at least MIN_VALLEY_PT continuous units. Auto-scales to page content so
+// dense vs. sparse pages need no per-doc tuning. Conservative defaults — we'd
+// rather under-cut (merge columns) than shred a paragraph with wide
+// inter-word gaps.
+
+/// Bucket size for the 1D density projection (points).
+const XY_BUCKET_PT: f32 = 2.0;
+/// Density threshold for a "valley", expressed as a fraction of the local
+/// median non-zero bucket density.
+const XY_T_DENS: f32 = 0.10;
+/// Minimum vertical-cut (column gutter) valley width.
+const XY_MIN_V_VALLEY_PT: f32 = 8.0;
+/// Minimum horizontal-cut (row gap) valley width, expressed as a multiple of
+/// the median line height.
+const XY_MIN_H_VALLEY_FACTOR: f32 = 1.4;
+/// Hard recursion cap.
+const XY_MAX_DEPTH: u32 = 6;
+/// Below this item count we stop trying to cut.
+const XY_MIN_ITEMS_TO_CUT: usize = 4;
+/// A horizontal cut must leave at least this many distinct text lines on each
+/// side; otherwise we don't slice prose into sliver bands.
+const XY_MIN_LINES_PER_H_SIDE: usize = 2;
+/// Vertical-cut score must beat the horizontal score by this factor to be
+/// chosen. Tie-breaks in favor of horizontal so pages are sliced into bands
+/// before columns — matches natural reading order.
+const XY_V_PREFERENCE_MARGIN: f32 = 1.1;
+
+#[derive(Debug)]
+struct CutCandidate {
+    axis: CutAxis,
+    /// Coordinate of the split (y for horizontal cut, x for vertical).
+    position: f32,
+    score: f32,
+}
+
+/// Character-weighted contribution of an item to the projection. Headings get
+/// roughly the same weight as the body text they're competing with, instead of
+/// being amplified by their bbox area.
+fn xy_item_weight(it: &TextItem) -> f32 {
+    it.text.chars().count().max(1) as f32
+}
+
+fn xy_root_bbox(items: &[ProjectedTextItem], page_width: f32, page_height: f32) -> Rect {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for it in items {
+        if it.item.text.is_empty() {
+            continue;
+        }
+        min_x = min_x.min(it.item.x);
+        min_y = min_y.min(it.item.y);
+        max_x = max_x.max(it.item.x + it.item.width.max(0.0));
+        max_y = max_y.max(it.item.y + it.item.height.max(0.0));
+    }
+    if !min_x.is_finite() {
+        return Rect {
+            x: 0.0,
+            y: 0.0,
+            width: page_width.max(1.0),
+            height: page_height.max(1.0),
+        };
+    }
+    let x = min_x.max(0.0);
+    let y = min_y.max(0.0);
+    let w = (max_x - x).max(1.0);
+    let h = (max_y - y).max(1.0);
+    let w = if page_width > 0.0 {
+        w.min(page_width)
+    } else {
+        w
+    };
+    let h = if page_height > 0.0 {
+        h.min(page_height)
+    } else {
+        h
+    };
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
+
+fn xy_median_line_height(items: &[ProjectedTextItem], idxs: &[usize]) -> f32 {
+    let mut heights: Vec<f32> = idxs
+        .iter()
+        .filter_map(|&i| {
+            let h = items[i].item.height;
+            if h > 0.5 { Some(h) } else { None }
+        })
+        .collect();
+    if heights.is_empty() {
+        return 10.0;
+    }
+    heights.sort_by(|a, b| a.total_cmp(b));
+    heights[heights.len() / 2]
+}
+
+/// Approximate distinct-line count by y-banding, used only to enforce
+/// `XY_MIN_LINES_PER_H_SIDE`.
+fn xy_distinct_lines(items: &[ProjectedTextItem], idxs: &[usize], median_h: f32) -> usize {
+    if idxs.is_empty() {
+        return 0;
+    }
+    let band = (median_h * 0.5).max(2.0);
+    let mut ys: Vec<f32> = idxs.iter().map(|&i| items[i].item.y).collect();
+    ys.sort_by(|a, b| a.total_cmp(b));
+    let mut lines = 1usize;
+    let mut last = ys[0];
+    for &y in &ys[1..] {
+        if (y - last).abs() > band {
+            lines += 1;
+            last = y;
+        }
+    }
+    lines
+}
+
+/// Find the best valley along `axis` inside `bbox` for the given items. The
+/// returned position is in absolute page coordinates.
+///
+/// `figures` is the set of figure-region rectangles on the page. Any figure
+/// that intersects `bbox` is stamped into the density projection like a giant
+/// opaque text block — its perpendicular extent (clipped to `bbox`) is added
+/// to each bucket it covers along `axis`. This makes the recursion prefer
+/// cuts *around* figures rather than slicing through them (which is the
+/// motivating fix for academic-paper page-1 layouts where a figure straddles
+/// both columns).
+fn xy_find_best_cut(
+    items: &[ProjectedTextItem],
+    idxs: &[usize],
+    bbox: &Rect,
+    axis: CutAxis,
+    median_h: f32,
+    figures: &[Rect],
+) -> Option<CutCandidate> {
+    let (origin, length) = match axis {
+        CutAxis::Horizontal => (bbox.y, bbox.height),
+        CutAxis::Vertical => (bbox.x, bbox.width),
+    };
+    if length <= 0.0 {
+        return None;
+    }
+    let n_buckets = ((length / XY_BUCKET_PT).ceil() as usize).max(1);
+    let mut density = vec![0.0f32; n_buckets];
+
+    for &i in idxs {
+        let it = &items[i].item;
+        let (c0, c1) = match axis {
+            CutAxis::Horizontal => (it.y, it.y + it.height.max(0.0)),
+            CutAxis::Vertical => (it.x, it.x + it.width.max(0.0)),
+        };
+        let weight = xy_item_weight(it);
+        let b0_f = ((c0 - origin) / XY_BUCKET_PT).floor();
+        let b1_f = ((c1 - origin) / XY_BUCKET_PT).ceil();
+        let b0 = b0_f.max(0.0) as usize;
+        let b1 = (b1_f.max(b0_f + 1.0) as usize).min(n_buckets);
+        for b in b0..b1 {
+            density[b] += weight;
+        }
+    }
+
+    // Stamp figures into the projection as opaque obstacles. A figure that
+    // intersects `bbox` adds density to each axis-parallel bucket it spans;
+    // weight = its perpendicular extent (clipped to bbox) so figures behave
+    // like very wide/tall pseudo-items relative to text. The valley search
+    // naturally finds cuts adjacent to figures rather than through them.
+    for fig in figures {
+        let fx0 = fig.x.max(bbox.x);
+        let fy0 = fig.y.max(bbox.y);
+        let fx1 = (fig.x + fig.width).min(bbox.x + bbox.width);
+        let fy1 = (fig.y + fig.height).min(bbox.y + bbox.height);
+        if fx1 <= fx0 || fy1 <= fy0 {
+            continue;
+        }
+        let (c0, c1, perp) = match axis {
+            CutAxis::Horizontal => (fy0, fy1, fx1 - fx0),
+            CutAxis::Vertical => (fx0, fx1, fy1 - fy0),
+        };
+        let weight = perp.max(1.0);
+        let b0_f = ((c0 - origin) / XY_BUCKET_PT).floor();
+        let b1_f = ((c1 - origin) / XY_BUCKET_PT).ceil();
+        let b0 = b0_f.max(0.0) as usize;
+        let b1 = (b1_f.max(b0_f + 1.0) as usize).min(n_buckets);
+        for b in b0..b1 {
+            density[b] += weight;
+        }
+    }
+
+    let mut nonzero: Vec<f32> = density.iter().copied().filter(|d| *d > 0.0).collect();
+    if nonzero.is_empty() {
+        return None;
+    }
+    nonzero.sort_by(|a, b| a.total_cmp(b));
+    let median = nonzero[nonzero.len() / 2];
+    if median <= 0.0 {
+        return None;
+    }
+    let threshold = median * XY_T_DENS;
+
+    // Don't cut at leading/trailing whitespace — only consider valleys interior
+    // to the content's span on this axis.
+    let first_dense = density.iter().position(|d| *d > threshold)?;
+    let last_dense = density.iter().rposition(|d| *d > threshold)?;
+    if last_dense <= first_dense + 1 {
+        return None;
+    }
+
+    let min_valley_pt = match axis {
+        CutAxis::Vertical => XY_MIN_V_VALLEY_PT,
+        CutAxis::Horizontal => median_h * XY_MIN_H_VALLEY_FACTOR,
+    };
+    let min_valley_buckets = ((min_valley_pt / XY_BUCKET_PT).ceil() as usize).max(1);
+
+    let mut best: Option<CutCandidate> = None;
+    let mut i = first_dense + 1;
+    while i <= last_dense {
+        if density[i] <= threshold {
+            let s = i;
+            while i <= last_dense && density[i] <= threshold {
+                i += 1;
+            }
+            let e = i; // exclusive
+            let width = e - s;
+            if width >= min_valley_buckets {
+                let mean: f32 = density[s..e].iter().sum::<f32>() / width as f32;
+                let depth = (1.0 - mean / median).max(0.0);
+                let score = width as f32 * depth;
+                let mid = (s as f32 + e as f32) * 0.5;
+                let position = origin + mid * XY_BUCKET_PT;
+                if best.as_ref().is_none_or(|b| score > b.score) {
+                    best = Some(CutCandidate {
+                        axis,
+                        position,
+                        score,
+                    });
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    best
+}
+
+fn xy_split_bbox(bbox: &Rect, cut: &CutCandidate) -> (Rect, Rect) {
+    match cut.axis {
+        CutAxis::Horizontal => {
+            let top_h = (cut.position - bbox.y).max(0.0);
+            let top = Rect {
+                x: bbox.x,
+                y: bbox.y,
+                width: bbox.width,
+                height: top_h,
+            };
+            let bot = Rect {
+                x: bbox.x,
+                y: cut.position,
+                width: bbox.width,
+                height: (bbox.height - top_h).max(0.0),
+            };
+            (top, bot)
+        }
+        CutAxis::Vertical => {
+            let left_w = (cut.position - bbox.x).max(0.0);
+            let left = Rect {
+                x: bbox.x,
+                y: bbox.y,
+                width: left_w,
+                height: bbox.height,
+            };
+            let right = Rect {
+                x: cut.position,
+                y: bbox.y,
+                width: (bbox.width - left_w).max(0.0),
+                height: bbox.height,
+            };
+            (left, right)
+        }
+    }
+}
+
+/// Minimum fraction of region width a banner band must cover.
+const XY_BANNER_WIDTH_FRACTION: f32 = 0.6;
+/// Banner clearance gap above/below in multiples of median line height.
+const XY_BANNER_CLEARANCE_FACTOR: f32 = 1.5;
+
+/// Detect a "banner" y-band — one or more vertically-adjacent wide text bands
+/// (≥ `XY_BANNER_WIDTH_FRACTION` of bbox width) flanked by a clear vertical
+/// gap from the rest of the content. Returns an H-cut that isolates the banner
+/// from neighboring content.
+///
+/// Motivating case: a full-width centered title + authors block above a 2-
+/// column body where a figure straddles both columns. Density-based XY-cut
+/// can't separate them because the figure prevents any clean V-cut and there's
+/// no obvious H-valley between the banner and the body. The banner detector
+/// runs first and force-cuts just below the banner stack, freeing the
+/// recursion to find normal column gutters in the lower region.
+///
+/// Also helps mid-document section headings that span the full content width:
+/// a wide centered "5 Conclusion" line above a 2-column body would otherwise
+/// get pulled into one column.
+fn xy_find_banner_cut(
+    items: &[ProjectedTextItem],
+    idxs: &[usize],
+    bbox: &Rect,
+    median_h: f32,
+) -> Option<CutCandidate> {
+    if bbox.width <= 1.0 || idxs.len() < 2 {
+        return None;
+    }
+    let mut sorted: Vec<usize> = idxs.iter().copied().collect();
+    sorted.sort_by(|&a, &b| items[a].item.y.total_cmp(&items[b].item.y));
+    let band_tol = (median_h * 0.5).max(2.0);
+    let min_clearance = (median_h * XY_BANNER_CLEARANCE_FACTOR).max(8.0);
+    let width_threshold = XY_BANNER_WIDTH_FRACTION * bbox.width;
+
+    // Group items into y-bands. A new item joins the current band when its top
+    // is within `band_tol` of either the band's center or its existing bottom
+    // (handles slight baseline variation).
+    let mut bands: Vec<(f32, f32, f32, f32)> = Vec::new(); // (y_min, y_max, x_min, x_max)
+    for &i in &sorted {
+        let it = &items[i].item;
+        let y0 = it.y;
+        let y1 = it.y + it.height.max(0.0);
+        let x0 = it.x;
+        let x1 = it.x + it.width.max(0.0);
+        let mut merged = false;
+        if let Some(last) = bands.last_mut() {
+            let center = (last.0 + last.1) * 0.5;
+            if (y0 - center).abs() <= band_tol || y0 <= last.1 + band_tol {
+                last.0 = last.0.min(y0);
+                last.1 = last.1.max(y1);
+                last.2 = last.2.min(x0);
+                last.3 = last.3.max(x1);
+                merged = true;
+            }
+        }
+        if !merged {
+            bands.push((y0, y1, x0, x1));
+        }
+    }
+    if bands.is_empty() {
+        return None;
+    }
+    let is_wide = |b: &(f32, f32, f32, f32)| -> bool { (b.3 - b.2) >= width_threshold };
+
+    // Walk top→bottom. For each run of consecutive wide bands (close enough to
+    // each other to count as a single banner stack), check above/below clearance
+    // and emit a cut if isolated.
+    let mut i = 0;
+    while i < bands.len() {
+        if !is_wide(&bands[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut end = i;
+        // Extend through consecutive wide bands separated by less than the
+        // clearance threshold — multi-line title + authors counts as one
+        // banner stack.
+        while end + 1 < bands.len()
+            && is_wide(&bands[end + 1])
+            && bands[end + 1].0 - bands[end].1 < min_clearance
+        {
+            end += 1;
+        }
+        let banner_top = bands[start].0;
+        let banner_bot = bands[end].1;
+        let above_y = if start > 0 {
+            Some(bands[start - 1].1)
+        } else {
+            None
+        };
+        let below_y = if end + 1 < bands.len() {
+            Some(bands[end + 1].0)
+        } else {
+            None
+        };
+        let above_clear = above_y.is_none_or(|ay| banner_top - ay >= min_clearance);
+        let below_clear = below_y.is_none_or(|by| by - banner_bot >= min_clearance);
+
+        if above_clear && below_clear {
+            // Prefer cutting BELOW the banner so it becomes the top region of
+            // the split (matches natural reading order). Fall back to cutting
+            // above only when there's nothing below to cut against.
+            let cut_y = if let Some(by) = below_y {
+                (banner_bot + by) * 0.5
+            } else if let Some(ay) = above_y {
+                (ay + banner_top) * 0.5
+            } else {
+                // Banner spans the whole region — no productive cut.
+                i = end + 1;
+                continue;
+            };
+            // Skip degenerate cuts that would leave one side empty.
+            if cut_y > bbox.y + 1.0 && cut_y < bbox.y + bbox.height - 1.0 {
+                return Some(CutCandidate {
+                    axis: CutAxis::Horizontal,
+                    position: cut_y,
+                    score: f32::INFINITY,
+                });
+            }
+        }
+        i = end + 1;
+    }
+    None
+}
+
+fn xy_cut_rec(
+    items: &[ProjectedTextItem],
+    idxs: Vec<usize>,
+    bbox: Rect,
+    depth: u32,
+    median_h: f32,
+    figures: &[Rect],
+) -> Region {
+    if idxs.len() <= XY_MIN_ITEMS_TO_CUT || depth >= XY_MAX_DEPTH {
+        return Region {
+            bbox,
+            kind: RegionKind::Leaf { item_indices: idxs },
+        };
+    }
+    // Banner cut wins over density-based valleys. Score is f32::INFINITY so
+    // the existing comparison logic naturally selects it.
+    let banner = xy_find_banner_cut(items, &idxs, &bbox, median_h);
+    let h = xy_find_best_cut(items, &idxs, &bbox, CutAxis::Horizontal, median_h, figures);
+    let v = xy_find_best_cut(items, &idxs, &bbox, CutAxis::Vertical, median_h, figures);
+    let cut = match (banner, h, v) {
+        (Some(bc), _, _) => Some(bc),
+        (None, Some(hc), Some(vc)) => {
+            if vc.score > hc.score * XY_V_PREFERENCE_MARGIN {
+                Some(vc)
+            } else {
+                Some(hc)
+            }
+        }
+        (None, Some(hc), None) => Some(hc),
+        (None, None, Some(vc)) => Some(vc),
+        (None, None, None) => None,
+    };
+    let Some(cut) = cut else {
+        return Region {
+            bbox,
+            kind: RegionKind::Leaf { item_indices: idxs },
+        };
+    };
+
+    // Partition items by centroid. We use centroids rather than bbox edges so
+    // items that straddle the cut don't get arbitrarily assigned — they go to
+    // whichever side holds most of their ink.
+    let mut left: Vec<usize> = Vec::new();
+    let mut right: Vec<usize> = Vec::new();
+    for i in idxs {
+        let it = &items[i].item;
+        let centroid = match cut.axis {
+            CutAxis::Horizontal => it.y + it.height.max(0.0) * 0.5,
+            CutAxis::Vertical => it.x + it.width.max(0.0) * 0.5,
+        };
+        if centroid < cut.position {
+            left.push(i);
+        } else {
+            right.push(i);
+        }
+    }
+    if left.is_empty() || right.is_empty() {
+        let mut all = left;
+        all.extend(right);
+        return Region {
+            bbox,
+            kind: RegionKind::Leaf { item_indices: all },
+        };
+    }
+    // Banner cuts (score = ∞) at the page root are explicitly meant to
+    // isolate single-line wide headers like titles, so skip the min-lines
+    // guard for them. At deeper recursion levels we keep the guard — an
+    // aggressive single-line banner cut mid-recursion fragments paragraphs
+    // around emphasized lines (e.g. a centered "Figure N caption" sandwiched
+    // between body paragraphs would otherwise carve out its own sliver
+    // region and break paragraph continuation).
+    let allow_single_line =
+        cut.axis == CutAxis::Horizontal && cut.score.is_infinite() && depth == 0;
+    if cut.axis == CutAxis::Horizontal && !allow_single_line {
+        let lc = xy_distinct_lines(items, &left, median_h);
+        let rc = xy_distinct_lines(items, &right, median_h);
+        if lc < XY_MIN_LINES_PER_H_SIDE || rc < XY_MIN_LINES_PER_H_SIDE {
+            let mut all = left;
+            all.extend(right);
+            return Region {
+                bbox,
+                kind: RegionKind::Leaf { item_indices: all },
+            };
+        }
+    }
+
+    let (left_bbox, right_bbox) = xy_split_bbox(&bbox, &cut);
+    let left_region = xy_cut_rec(items, left, left_bbox, depth + 1, median_h, figures);
+    let right_region = xy_cut_rec(items, right, right_bbox, depth + 1, median_h, figures);
+    Region {
+        bbox,
+        kind: RegionKind::Split {
+            axis: cut.axis,
+            children: vec![left_region, right_region],
+        },
+    }
+}
+
+/// Build the page's XY-cut region tree.
+///
+/// `figures` is an optional set of figure-region bounding rectangles (from
+/// `figure_cluster::detect_figure_rects`); pass `&[]` to disable obstacle
+/// seeding. Figures cause the recursion to favor cuts around them.
+pub(crate) fn xy_cut(
+    items: &[ProjectedTextItem],
+    page_width: f32,
+    page_height: f32,
+    figures: &[Rect],
+) -> Region {
+    let all: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, it)| !it.item.text.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    if all.is_empty() {
+        return Region {
+            bbox: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: page_width.max(1.0),
+                height: page_height.max(1.0),
+            },
+            kind: RegionKind::Leaf {
+                item_indices: Vec::new(),
+            },
+        };
+    }
+    let bbox = xy_root_bbox(items, page_width, page_height);
+    let median_h = xy_median_line_height(items, &all);
+    xy_cut_rec(items, all, bbox, 0, median_h, figures)
+}
+
+/// Pre-order walk of leaves. Each leaf yields its `region_path` (index trail
+/// from the root) and item indices. Leaves with no items are skipped.
+fn xy_walk_leaves(region: &Region, path: &mut Vec<u16>, out: &mut Vec<(Vec<u16>, Vec<usize>)>) {
+    match &region.kind {
+        RegionKind::Leaf { item_indices } => {
+            if !item_indices.is_empty() {
+                out.push((path.clone(), item_indices.clone()));
+            }
+        }
+        RegionKind::Split { children, .. } => {
+            for (i, child) in children.iter().enumerate() {
+                path.push(i as u16);
+                xy_walk_leaves(child, path, out);
+                path.pop();
+            }
+        }
+    }
+}
+
+/// Group `items` into per-leaf lines using the XY-cut region tree, then derive
+/// per-line aggregates. Leaves are walked pre-order so reading order follows
+/// the layout — top→bottom bands, left→right columns, recursively. Returns
+/// the populated lines and the region tree so callers can persist it on
+/// `ParsedPage`.
+pub(crate) fn build_projected_lines(
+    items: &[ProjectedTextItem],
+    page_width: f32,
+    page_height: f32,
+    figures: &[Rect],
+) -> (Vec<ProjectedLine>, Region) {
+    if items.is_empty() {
+        return (Vec::new(), Region::default());
+    }
+
+    let region = xy_cut(items, page_width, page_height, figures);
+    let mut leaves: Vec<(Vec<u16>, Vec<usize>)> = Vec::new();
+    xy_walk_leaves(&region, &mut Vec::new(), &mut leaves);
+
+    let mut out: Vec<ProjectedLine> = Vec::new();
+    for (path, indices) in leaves {
+        // Sort within the leaf by y, tie-break by x. `build_one_line` re-sorts
+        // by x for left→right concatenation; the y-banding loop here only
+        // needs y order.
+        let mut sorted = indices;
+        sorted.sort_by(|&a, &b| {
+            items[a]
+                .item
+                .y
+                .total_cmp(&items[b].item.y)
+                .then(items[a].item.x.total_cmp(&items[b].item.x))
+        });
+
+        let mut current: Vec<usize> = Vec::new();
+        let mut current_y: f32 = 0.0;
+        let mut current_h: f32 = 0.0;
+        for idx in sorted {
+            let y = items[idx].item.y;
+            let h = items[idx].item.height.max(1.0);
+            if current.is_empty() {
+                current.push(idx);
+                current_y = y;
+                current_h = h;
+                continue;
+            }
+            let same = (y - current_y).abs() < current_h.max(h) * 0.5;
+            if same {
+                current.push(idx);
+                current_y = current_y.min(y);
+                current_h = current_h.max(h);
+            } else {
+                out.push(build_one_line(items, &current, path.clone()));
+                current = vec![idx];
+                current_y = y;
+                current_h = h;
+            }
+        }
+        if !current.is_empty() {
+            out.push(build_one_line(items, &current, path.clone()));
+        }
+    }
+
+    // Normalize `indent_x` to be leaf-relative: subtract each leaf's minimum
+    // line bbox.x from every line in that leaf. This way list-nesting and
+    // paragraph-indent comparisons in `markdown_layout.rs` use offsets from
+    // the column's left edge rather than absolute page x. Multi-column pages
+    // would otherwise see every column-2 line as "indented" relative to
+    // column-1 lines.
+    {
+        use std::collections::HashMap;
+        let mut leaf_min: HashMap<Vec<u16>, f32> = HashMap::new();
+        for line in &out {
+            let e = leaf_min
+                .entry(line.region_path.clone())
+                .or_insert(f32::INFINITY);
+            if line.indent_x < *e {
+                *e = line.indent_x;
+            }
+        }
+        for line in &mut out {
+            if let Some(min) = leaf_min.get(&line.region_path)
+                && min.is_finite()
+            {
+                line.indent_x -= *min;
+                if line.indent_x < 0.0 {
+                    line.indent_x = 0.0;
+                }
+            }
+        }
+    }
+
+    (out, region)
+}
+
+fn build_one_line(
+    items: &[ProjectedTextItem],
+    idxs: &[usize],
+    region_path: Vec<u16>,
+) -> ProjectedLine {
+    // Sort by x so concatenation reads left→right even if reading order had
+    // rotated insertions.
+    let mut sorted: Vec<usize> = idxs.to_vec();
+    sorted.sort_by(|a, b| items[*a].item.x.total_cmp(&items[*b].item.x));
+
+    let mut text = String::new();
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    let mut size_weights: HashMap<u32, (f32, usize)> = HashMap::new();
+    let mut height_weights: HashMap<u32, (f32, usize)> = HashMap::new();
+    let mut name_weights: HashMap<String, usize> = HashMap::new();
+    let mut bold_chars: usize = 0;
+    let mut italic_chars: usize = 0;
+    let mut mono_chars: usize = 0;
+    let mut total_chars: usize = 0;
+    let mut anchor_weights: HashMap<u8, usize> = HashMap::new();
+    let mut mcid: Option<i32> = None;
+    let mut spans: Vec<TextItem> = Vec::with_capacity(sorted.len());
+
+    for (pos, &i) in sorted.iter().enumerate() {
+        let proj = &items[i];
+        let it = &proj.item;
+        spans.push(it.clone());
+
+        // Concatenate item text. Use existing num_spaces from projection only as
+        // a hint — the markdown emitter re-collapses whitespace, so we just
+        // ensure there's *some* separation between adjacent items.
+        if pos > 0 && !text.ends_with(' ') {
+            text.push(' ');
+        }
+        text.push_str(&it.text);
+
+        min_x = min_x.min(it.x);
+        min_y = min_y.min(it.y);
+        max_x = max_x.max(it.x + it.width);
+        max_y = max_y.max(it.y + it.height);
+
+        let n = it.text.chars().count().max(1);
+        total_chars += n;
+
+        if let Some(size) = it.font_size {
+            if size > 0.0 {
+                let key = (size * 100.0).round() as u32;
+                let e = size_weights.entry(key).or_insert((size, 0));
+                e.1 += n;
+            }
+        }
+        let h_key = (it.height.max(0.0) * 100.0).round() as u32;
+        let e = height_weights.entry(h_key).or_insert((it.height, 0));
+        e.1 += n;
+
+        if let Some(name) = &it.font_name {
+            *name_weights.entry(name.clone()).or_insert(0) += n;
+        }
+
+        if is_bold_item(it) {
+            bold_chars += n;
+        }
+        if is_italic_item(it) {
+            italic_chars += n;
+        }
+        if is_mono_item(it) {
+            mono_chars += n;
+        }
+
+        let akey = match proj.anchor {
+            Anchor::Left => 0u8,
+            Anchor::Right => 1,
+            Anchor::Center => 2,
+            Anchor::Floating => 3,
+        };
+        *anchor_weights.entry(akey).or_insert(0) += n;
+
+        if mcid.is_none() {
+            mcid = it.mcid;
+        }
+    }
+
+    let dominant_size_from_font = size_weights
+        .values()
+        .max_by_key(|(_, n)| *n)
+        .map(|(s, _)| *s)
+        .unwrap_or(0.0);
+    // Fallback: when PDFium reports font_size ≤ 1.5 (size baked into the text
+    // matrix), use char-weighted bbox height instead so heading detection has
+    // something to chew on. Documented in MARKDOWN_PROGRESS.md.
+    let dominant_font_size = if dominant_size_from_font > 1.5 {
+        dominant_size_from_font
+    } else {
+        height_weights
+            .values()
+            .max_by_key(|(_, n)| *n)
+            .map(|(h, _)| *h)
+            .unwrap_or(0.0)
+    };
+
+    let dominant_font_name = name_weights
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(n, _)| n);
+
+    let majority = |count: usize| total_chars > 0 && count * 2 > total_chars;
+
+    let dominant_anchor_key = anchor_weights
+        .iter()
+        .max_by_key(|(_, n)| **n)
+        .map(|(k, _)| *k)
+        .unwrap_or(0);
+    let anchor = match dominant_anchor_key {
+        1 => Anchor::Right,
+        2 => Anchor::Center,
+        3 => Anchor::Floating,
+        _ => Anchor::Left,
+    };
+
+    let bbox = Rect {
+        x: if min_x.is_finite() { min_x } else { 0.0 },
+        y: if min_y.is_finite() { min_y } else { 0.0 },
+        width: if max_x.is_finite() && min_x.is_finite() {
+            (max_x - min_x).max(0.0)
+        } else {
+            0.0
+        },
+        height: if max_y.is_finite() && min_y.is_finite() {
+            (max_y - min_y).max(0.0)
+        } else {
+            0.0
+        },
+    };
+
+    ProjectedLine {
+        text,
+        bbox: bbox.clone(),
+        anchor,
+        // Real column detection is deferred (carry-forward in MARKDOWN_PROGRESS).
+        // `indent_x` mirrors bbox.x for now; the markdown emitter relies on
+        // this for paragraph/list-indent comparisons within a single column.
+        indent_x: bbox.x,
+        dominant_font_size,
+        dominant_font_name,
+        all_bold: majority(bold_chars),
+        all_italic: majority(italic_chars),
+        all_mono: majority(mono_chars),
+        all_strike: false,
+        spans,
+        region_path,
+        mcid,
+    }
 }
 
 #[cfg(test)]
@@ -2698,6 +3624,7 @@ mod tests {
             page_number: 1,
             page_width: 612.0,
             page_height: 792.0,
+            graphics: Vec::new(),
             text_items: Vec::new(),
         };
         let projection_boxes = vec![
@@ -2710,6 +3637,211 @@ mod tests {
         assert!(text.is_empty());
     }
 
+    fn item_at(text: &str, x: f32, y: f32, w: f32, h: f32) -> ProjectedTextItem {
+        ProjectedTextItem {
+            item: TextItem {
+                text: text.to_string(),
+                x,
+                y,
+                width: w,
+                height: h,
+                ..Default::default()
+            },
+            snap: Snap::Left,
+            anchor: Anchor::Left,
+            is_dup: false,
+            rendered: false,
+            num_spaces: 0,
+            force_unsnapped: false,
+            is_margin_line_number: false,
+            rotated: false,
+            d: 0.0,
+        }
+    }
+
+    #[test]
+    fn xy_cut_finds_column_gutter_on_two_column_layout() {
+        // Two columns, 50pt-wide gutter centered at x=300. Each column has
+        // five rows of body text. Expect: a single vertical split at the
+        // gutter, both children leaves.
+        let mut items = Vec::new();
+        for row in 0..5 {
+            let y = 100.0 + row as f32 * 14.0;
+            items.push(item_at("left side text", 50.0, y, 200.0, 10.0));
+            items.push(item_at("right side text", 350.0, y, 200.0, 10.0));
+        }
+        let region = xy_cut(&items, 612.0, 792.0, &[]);
+        match region.kind {
+            RegionKind::Split { axis, children } => {
+                assert_eq!(axis, CutAxis::Vertical);
+                assert_eq!(children.len(), 2);
+                let l = match &children[0].kind {
+                    RegionKind::Leaf { item_indices } => item_indices.len(),
+                    _ => 0,
+                };
+                let r = match &children[1].kind {
+                    RegionKind::Leaf { item_indices } => item_indices.len(),
+                    _ => 0,
+                };
+                assert_eq!(l, 5, "left col should hold 5 items");
+                assert_eq!(r, 5, "right col should hold 5 items");
+            }
+            _ => panic!("expected a vertical split, got {:?}", region.kind),
+        }
+    }
+
+    #[test]
+    fn xy_cut_returns_leaf_on_single_column_prose() {
+        // Tight single-column text — no valley wide enough to cut.
+        let items: Vec<_> = (0..8)
+            .map(|row| {
+                let y = 100.0 + row as f32 * 12.0;
+                item_at("the quick brown fox", 60.0, y, 400.0, 10.0)
+            })
+            .collect();
+        let region = xy_cut(&items, 612.0, 792.0, &[]);
+        assert!(matches!(region.kind, RegionKind::Leaf { .. }));
+    }
+
+    #[test]
+    fn xy_cut_walk_assigns_reading_order_paths() {
+        // 2-column page: pre-order walk visits left column before right.
+        let mut items = Vec::new();
+        for row in 0..5 {
+            let y = 100.0 + row as f32 * 14.0;
+            items.push(item_at("L", 50.0, y, 200.0, 10.0));
+            items.push(item_at("R", 350.0, y, 200.0, 10.0));
+        }
+        let (lines, _region) = build_projected_lines(&items, 612.0, 792.0, &[]);
+        // Left col's 5 lines come first (path [0, ...]), then right col's 5
+        // (path [1, ...]).
+        assert_eq!(lines.len(), 10);
+        for line in &lines[..5] {
+            assert_eq!(line.region_path.first().copied(), Some(0));
+        }
+        for line in &lines[5..] {
+            assert_eq!(line.region_path.first().copied(), Some(1));
+        }
+    }
+
+    #[test]
+    fn banner_cut_isolates_full_width_title_above_two_columns() {
+        // Layout: a centered wide title at the top, clear gap, then 2-column
+        // body text. Density-based V-cut at the root would place the title
+        // (centroid at page center) inside one of the columns. The banner
+        // detector should H-cut just below the title so it ends up as the
+        // pre-order first leaf, separate from both columns.
+        let mut items = Vec::new();
+        items.push(item_at(
+            "Wide Centered Title Spanning Full Page",
+            100.0,
+            50.0,
+            412.0,
+            14.0,
+        ));
+        // Body starts well below the title (clear vertical gap).
+        for row in 0..5 {
+            let y = 200.0 + row as f32 * 14.0;
+            items.push(item_at("left side text", 50.0, y, 200.0, 10.0));
+            items.push(item_at("right side text", 350.0, y, 200.0, 10.0));
+        }
+        let (lines, _region) = build_projected_lines(&items, 612.0, 792.0, &[]);
+        // First line (in pre-order) must be the title.
+        let first = lines.first().expect("at least one line");
+        assert!(
+            first.text.contains("Title"),
+            "expected title first, got {:?}",
+            first.text
+        );
+        // Title leaf should be different from any column leaf.
+        let body_paths: Vec<&Vec<u16>> = lines[1..].iter().map(|l| &l.region_path).collect();
+        assert!(
+            body_paths.iter().all(|p| **p != first.region_path),
+            "title leaf should not share region_path with body lines"
+        );
+    }
+
+    #[test]
+    fn banner_cut_does_not_fire_on_plain_two_column_layout() {
+        // Same layout as `xy_cut_finds_column_gutter_on_two_column_layout` —
+        // no wide centered element to trigger a banner cut. Regression guard:
+        // the V-cut must still be the first cut at the root.
+        let mut items = Vec::new();
+        for row in 0..5 {
+            let y = 100.0 + row as f32 * 14.0;
+            items.push(item_at("left side text", 50.0, y, 200.0, 10.0));
+            items.push(item_at("right side text", 350.0, y, 200.0, 10.0));
+        }
+        let region = xy_cut(&items, 612.0, 792.0, &[]);
+        match region.kind {
+            RegionKind::Split { axis, .. } => {
+                assert_eq!(axis, CutAxis::Vertical, "expected V-cut, not H");
+            }
+            _ => panic!("expected a split at the root"),
+        }
+    }
+
+    #[test]
+    fn figure_obstacle_forces_h_cut_around_straddling_figure() {
+        // Two text bands separated by a wide figure that spans both halves of
+        // the page. The text alone has no V-gutter and only a modest y-gap;
+        // without obstacle seeding the root would either V-cut (bad — the
+        // figure straddles both sides) or fail to cut at all. With the figure
+        // stamped into density, the H-valleys above/below the figure dominate
+        // and the recursion H-cuts into a top band → figure band → bottom band.
+        let mut items = Vec::new();
+        // Top band: several wide lines of text.
+        for row in 0..4 {
+            let y = 100.0 + row as f32 * 14.0;
+            items.push(item_at(
+                "top band line spans full width",
+                50.0,
+                y,
+                500.0,
+                12.0,
+            ));
+        }
+        // Bottom band: several wide lines, well below the figure.
+        for row in 0..4 {
+            let y = 400.0 + row as f32 * 14.0;
+            items.push(item_at(
+                "bottom band line after the figure",
+                50.0,
+                y,
+                500.0,
+                12.0,
+            ));
+        }
+        // Figure: 500×200pt block centered in the page between the bands.
+        let figures = vec![Rect {
+            x: 60.0,
+            y: 160.0,
+            width: 490.0,
+            height: 200.0,
+        }];
+
+        let region_no_fig = xy_cut(&items, 612.0, 792.0, &[]);
+        let region_with_fig = xy_cut(&items, 612.0, 792.0, &figures);
+
+        // With figures, the root cut must be horizontal (top vs. bottom band).
+        // Drilling through nested splits is fine — we just check the first one.
+        match region_with_fig.kind {
+            RegionKind::Split { axis, .. } => {
+                assert_eq!(
+                    axis,
+                    CutAxis::Horizontal,
+                    "figure obstacle should force an H-cut between bands"
+                );
+            }
+            RegionKind::Leaf { .. } => panic!("expected a split when figure is present"),
+        }
+        // Without figures, the same layout *might* still find an H-cut (the
+        // gap from y≈127 to y≈400 is real), but the cut score with figures
+        // should be at least as strong. We mostly just want to confirm both
+        // paths return without panicking and the figure path produces a split.
+        let _ = region_no_fig;
+    }
+
     #[test]
     fn project_pages_to_grid_handles_page_with_no_text_items() {
         let pages = vec![Page {
@@ -2717,6 +3849,7 @@ mod tests {
             page_width: 612.0,
             page_height: 792.0,
             text_items: Vec::new(),
+            graphics: Vec::new(),
         }];
 
         let parsed = project_pages_to_grid(pages);

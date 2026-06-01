@@ -25,6 +25,10 @@ pub mod conversion;
 #[doc(hidden)]
 pub mod extract;
 #[doc(hidden)]
+pub mod figure_cluster;
+#[doc(hidden)]
+pub mod markdown_layout;
+#[doc(hidden)]
 pub mod ocr;
 #[doc(hidden)]
 pub mod ocr_merge;

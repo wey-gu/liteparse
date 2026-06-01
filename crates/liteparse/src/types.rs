@@ -62,6 +62,10 @@ pub struct Page {
     pub page_width: f32,
     pub page_height: f32,
     pub text_items: Vec<TextItem>,
+    /// Vector graphics on the page, distilled from PDFium path objects.
+    /// Not emitted in JSON/text outputs — consumed by the markdown layout pass.
+    #[serde(skip)]
+    pub graphics: Vec<GraphicPrimitive>,
 }
 
 /// Represents a fully parsed page with projected text layout.
@@ -72,6 +76,138 @@ pub struct ParsedPage {
     pub page_height: f32,
     pub text: String,
     pub text_items: Vec<TextItem>,
+    /// Per-line structural metadata used by the markdown emitter. Not part of
+    /// the JSON/text outputs (consumed internally) so it is `#[serde(skip)]`.
+    #[serde(skip)]
+    pub projected_lines: Vec<ProjectedLine>,
+    /// Root of the XY-cut region tree for this page. Leaves correspond to the
+    /// `region_path` on each `ProjectedLine`. Internal-only.
+    #[serde(skip)]
+    pub regions: Region,
+    /// Vector graphics on the page (decomposed paths) used by the markdown
+    /// emitter for ruled-table / HR / figure-cluster detection. Not part of
+    /// the JSON/text output.
+    #[serde(skip)]
+    pub graphics: Vec<GraphicPrimitive>,
+    /// Figure-region bounding rectangles derived from `graphics`. Pre-computed
+    /// in `to_parsed_pages` so the XY-cut layout pass can treat them as
+    /// obstacles, and reused downstream for figure classification.
+    #[serde(skip)]
+    pub figures: Vec<Rect>,
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Lightweight vector-graphic primitive derived from PDFium path objects.
+/// Only the shapes useful to the markdown emitter (ruled tables, HRs, figure
+/// clusters) are kept — bezier curves and complex paths are decomposed into
+/// straight strokes, or dropped.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub enum GraphicPrimitive {
+    /// A single straight line segment in viewport coords. Used for HR/table
+    /// border detection.
+    Stroke {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Option<String>,
+        width: f32,
+    },
+    /// An axis-aligned rectangle — typically a filled cell background, banner,
+    /// or fully-stroked table border drawn as a single path.
+    Rect {
+        bbox: Rect,
+        fill: Option<String>,
+        stroke: Option<String>,
+    },
+}
+
+impl GraphicPrimitive {
+    /// Bbox of the primitive in viewport coords.
+    pub fn bbox(&self) -> Rect {
+        match self {
+            GraphicPrimitive::Stroke { x1, y1, x2, y2, .. } => {
+                let x = x1.min(*x2);
+                let y = y1.min(*y2);
+                Rect {
+                    x,
+                    y,
+                    width: (x2 - x1).abs(),
+                    height: (y2 - y1).abs(),
+                }
+            }
+            GraphicPrimitive::Rect { bbox, .. } => bbox.clone(),
+        }
+    }
+}
+
+/// Per-line structural metadata derived during grid projection. Used by the
+/// markdown emitter; not surfaced in JSON/text output.
+#[doc(hidden)]
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectedLine {
+    pub text: String,
+    pub bbox: Rect,
+    pub anchor: Anchor,
+    pub indent_x: f32,
+    pub dominant_font_size: f32,
+    pub dominant_font_name: Option<String>,
+    pub all_bold: bool,
+    pub all_italic: bool,
+    pub all_mono: bool,
+    pub all_strike: bool,
+    pub spans: Vec<TextItem>,
+    /// Path from the page's region-tree root to the leaf containing this line.
+    /// Equality means "same leaf"; prefix relationship means "one contains the
+    /// other". Replaces the prior flat `column_id` scheme so nested layouts
+    /// (banded splits with sub-columns) survive paragraph/table grouping.
+    pub region_path: Vec<u16>,
+    pub mcid: Option<i32>,
+}
+
+/// XY-cut region tree node. A page's root region recursively splits along H or
+/// V axes until each leaf holds a coherent block of items.
+#[doc(hidden)]
+#[derive(Debug, Clone, Default)]
+pub struct Region {
+    pub bbox: Rect,
+    pub kind: RegionKind,
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub enum RegionKind {
+    Leaf {
+        item_indices: Vec<usize>,
+    },
+    Split {
+        axis: CutAxis,
+        children: Vec<Region>,
+    },
+}
+
+impl Default for RegionKind {
+    fn default() -> Self {
+        RegionKind::Leaf {
+            item_indices: Vec::new(),
+        }
+    }
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CutAxis {
+    Horizontal,
+    Vertical,
 }
 
 #[doc(hidden)]
@@ -83,11 +219,14 @@ pub enum Snap {
 }
 
 #[doc(hidden)]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Anchor {
     Left,
     Right,
     Center,
+    /// Inline span that does not snap to a column edge — used by lines whose
+    /// dominant items couldn't be classified as Left/Right/Center.
+    Floating,
 }
 
 #[doc(hidden)]
@@ -150,6 +289,7 @@ mod tests {
             page_width: 100.0,
             page_height: 200.0,
             text_items: vec![sample_item()],
+            graphics: vec![],
         };
         let s = serde_json::to_string(&p).unwrap();
         assert!(s.contains("\"page_number\":1"));

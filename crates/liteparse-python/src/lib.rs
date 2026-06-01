@@ -239,6 +239,7 @@ impl PyLiteParseConfig {
             output_format: match cfg.output_format {
                 OutputFormat::Json => "json".to_string(),
                 OutputFormat::Text => "text".to_string(),
+                OutputFormat::Markdown => "markdown".to_string(),
             },
             preserve_very_small_text: cfg.preserve_very_small_text,
             password: cfg.password.clone(),
@@ -316,6 +317,7 @@ impl LiteParse {
         if let Some(v) = output_format {
             cfg.output_format = match v.as_str() {
                 "text" => OutputFormat::Text,
+                "markdown" | "md" => OutputFormat::Markdown,
                 _ => OutputFormat::Json,
             };
         }

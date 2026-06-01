@@ -9,6 +9,7 @@ use crate::ocr::http_simple::HttpOcrEngine;
 #[cfg(feature = "tesseract")]
 use crate::ocr::tesseract::TesseractOcrEngine;
 use crate::ocr_merge;
+use crate::output::markdown;
 use crate::projection;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::render;
@@ -193,13 +194,23 @@ impl LiteParse {
             t2.duration_since(t_ocr).as_secs_f64() * 1000.0
         ));
 
-        let full_text = parsed_pages
-            .iter()
-            .map(|p| p.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let full_text = if self.config.output_format == crate::config::OutputFormat::Markdown {
+            let md = markdown::format_markdown(&parsed_pages);
+            let t3 = web_time::Instant::now();
+            log(&format!(
+                "[liteparse] markdown: {:.1}ms",
+                t3.duration_since(t2).as_secs_f64() * 1000.0
+            ));
+            md
+        } else {
+            parsed_pages
+                .iter()
+                .map(|p| p.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
 
-        let total = t2.duration_since(t0).as_secs_f64() * 1000.0;
+        let total = web_time::Instant::now().duration_since(t0).as_secs_f64() * 1000.0;
         log(&format!("[liteparse] total: {:.1}ms", total));
 
         Ok(ParseResult {
