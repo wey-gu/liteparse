@@ -3,6 +3,7 @@ use std::sync::Once;
 
 use crate::document::Document;
 use crate::error::PdfiumError;
+use crate::ffi;
 
 static INIT: Once = Once::new();
 
@@ -12,8 +13,11 @@ pub struct Library {
 
 impl Library {
     pub fn init() -> Library {
+        #[cfg(not(target_arch = "wasm32"))]
+        pdfium_sys::dynamic::load_default().expect("failed to load pdfium shared library");
+
         INIT.call_once(|| {
-            unsafe { pdfium_sys::FPDF_InitLibrary() };
+            unsafe { ffi!(FPDF_InitLibrary()) };
         });
         Library { _private: () }
     }
@@ -29,10 +33,10 @@ impl Library {
             .transpose()?;
 
         let handle = unsafe {
-            pdfium_sys::FPDF_LoadDocument(
+            ffi!(FPDF_LoadDocument(
                 c_path.as_ptr(),
                 c_password.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
-            )
+            ))
         };
 
         if handle.is_null() {
@@ -52,11 +56,11 @@ impl Library {
             .transpose()?;
 
         let handle = unsafe {
-            pdfium_sys::FPDF_LoadMemDocument(
+            ffi!(FPDF_LoadMemDocument(
                 data.as_ptr() as *const std::ffi::c_void,
                 data.len() as i32,
                 c_password.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
-            )
+            ))
         };
 
         if handle.is_null() {

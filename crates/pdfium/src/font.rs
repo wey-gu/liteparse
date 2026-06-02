@@ -1,3 +1,5 @@
+use crate::ffi;
+
 /// Wrapper around FPDF_FONT obtained from a text object.
 /// This is a borrowed handle — it does not own the font and must not outlive
 /// the page object it was obtained from.
@@ -24,7 +26,7 @@ impl Font {
     /// # Safety
     /// `obj` must be a valid `FPDF_PAGEOBJECT` handle obtained from PDFium.
     pub unsafe fn from_text_object(obj: pdfium_sys::FPDF_PAGEOBJECT) -> Option<Self> {
-        let handle = unsafe { pdfium_sys::FPDFTextObj_GetFont(obj) };
+        let handle = unsafe { ffi!(FPDFTextObj_GetFont(obj)) };
         if handle.is_null() {
             None
         } else {
@@ -38,18 +40,23 @@ impl Font {
 
     /// Get the base font name (PostScript name, subset prefix stripped by PDFium).
     pub fn base_name(&self) -> Option<String> {
-        let len =
-            unsafe { pdfium_sys::FPDFFont_GetBaseFontName(self.handle, std::ptr::null_mut(), 0) };
+        let len = unsafe {
+            ffi!(FPDFFont_GetBaseFontName(
+                self.handle,
+                std::ptr::null_mut(),
+                0
+            ))
+        };
         if len == 0 {
             return None;
         }
         let mut buf: Vec<u8> = vec![0; len];
         let written = unsafe {
-            pdfium_sys::FPDFFont_GetBaseFontName(
+            ffi!(FPDFFont_GetBaseFontName(
                 self.handle,
                 buf.as_mut_ptr() as *mut std::ffi::c_char,
                 len,
-            )
+            ))
         };
         if written == 0 {
             return None;
@@ -65,7 +72,7 @@ impl Font {
 
     /// Get font type.
     pub fn font_type(&self) -> FontType {
-        let t = unsafe { pdfium_sys::FPDFFont_GetType(self.handle) };
+        let t = unsafe { ffi!(FPDFFont_GetType(self.handle)) };
         match t {
             pdfium_sys::FPDF_FONT_TYPE_FPDF_FONTTYPE_TYPE1 => FontType::Type1,
             pdfium_sys::FPDF_FONT_TYPE_FPDF_FONTTYPE_TRUETYPE => FontType::TrueType,
@@ -79,20 +86,20 @@ impl Font {
 
     /// Whether the font is embedded in the PDF.
     pub fn is_embedded(&self) -> bool {
-        unsafe { pdfium_sys::FPDFFont_GetIsEmbedded(self.handle) != 0 }
+        unsafe { ffi!(FPDFFont_GetIsEmbedded(self.handle)) != 0 }
     }
 
     /// Get font ascent for a given em size.
     pub fn ascent(&self, font_size: f32) -> Option<f32> {
         let mut val: f32 = 0.0;
-        let ok = unsafe { pdfium_sys::FPDFFont_GetAscent(self.handle, font_size, &mut val) };
+        let ok = unsafe { ffi!(FPDFFont_GetAscent(self.handle, font_size, &mut val)) };
         if ok != 0 { Some(val) } else { None }
     }
 
     /// Get font descent for a given em size (typically negative).
     pub fn descent(&self, font_size: f32) -> Option<f32> {
         let mut val: f32 = 0.0;
-        let ok = unsafe { pdfium_sys::FPDFFont_GetDescent(self.handle, font_size, &mut val) };
+        let ok = unsafe { ffi!(FPDFFont_GetDescent(self.handle, font_size, &mut val)) };
         if ok != 0 { Some(val) } else { None }
     }
 
@@ -100,12 +107,12 @@ impl Font {
     pub fn glyph_width_from_char_code(&self, char_code: u32, font_size: f32) -> Option<f32> {
         let mut width: f32 = 0.0;
         let ok = unsafe {
-            pdfium_sys::FPDFFont_GetGlyphWidthFromCharCode(
+            ffi!(FPDFFont_GetGlyphWidthFromCharCode(
                 self.handle,
                 char_code,
                 font_size,
                 &mut width,
-            )
+            ))
         };
         if ok != 0 { Some(width) } else { None }
     }
@@ -114,7 +121,12 @@ impl Font {
     pub fn glyph_width(&self, unicode: u32, font_size: f32) -> Option<f32> {
         let mut width: f32 = 0.0;
         let ok = unsafe {
-            pdfium_sys::FPDFFont_GetGlyphWidth(self.handle, unicode, font_size, &mut width)
+            ffi!(FPDFFont_GetGlyphWidth(
+                self.handle,
+                unicode,
+                font_size,
+                &mut width
+            ))
         };
         if ok != 0 { Some(width) } else { None }
     }

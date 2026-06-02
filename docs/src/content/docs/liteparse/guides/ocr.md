@@ -42,6 +42,26 @@ lit parse document.pdf --tessdata-path /path/to/tessdata
 
 The `tessdata_path` / `tessdataPath` option is also available in the library APIs.
 
+### Troubleshooting: missing language data
+
+If Tesseract can't find its language data, you'll see an error like:
+
+```
+Error opening data file tessdata/eng.traineddata
+Please make sure the TESSDATA_PREFIX environment variable is set to your "tessdata" directory.
+Failed loading language 'eng'
+```
+
+The bundled Tesseract still needs the `.traineddata` file for your language. It is normally downloaded and cached automatically on first use (under `~/.tesseract-rs/tessdata` on Linux, `~/Library/Application Support/tesseract-rs/tessdata` on macOS); if that download didn't happen — e.g. offline, restricted network, or a sandboxed install — OCR cannot run.
+
+To resolve it, do any one of the following:
+
+- Download the language file (e.g. [`eng.traineddata`](https://github.com/tesseract-ocr/tessdata)) and point LiteParse at it with `TESSDATA_PREFIX` or `--tessdata-path` (see [above](#offline--air-gapped-environments)).
+- Use an [HTTP OCR server](#http-ocr-servers) instead of the built-in engine.
+- Disable OCR with `--no-ocr` if you don't need it.
+
+When language data is missing for **every** page, LiteParse now fails with a clear `OCR failed for all N page(s)` error instead of returning a document with silently-empty OCR text — so an unresolved setup surfaces immediately rather than producing partial results that look complete.
+
 ### Disabling OCR
 
 If you don't need OCR (pure native-text PDFs, or you don't care about images), disable it for faster parsing:

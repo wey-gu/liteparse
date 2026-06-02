@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use crate::bitmap::Bitmap;
 use crate::document::Document;
 use crate::error::PdfiumError;
+use crate::ffi;
 use crate::text_page::TextPage;
 use crate::types::RectF;
 
@@ -24,15 +25,15 @@ pub struct Page<'doc> {
 
 impl Page<'_> {
     pub fn width(&self) -> f32 {
-        unsafe { pdfium_sys::FPDF_GetPageWidthF(self.handle) }
+        unsafe { ffi!(FPDF_GetPageWidthF(self.handle)) }
     }
 
     pub fn height(&self) -> f32 {
-        unsafe { pdfium_sys::FPDF_GetPageHeightF(self.handle) }
+        unsafe { ffi!(FPDF_GetPageHeightF(self.handle)) }
     }
 
     pub fn rotation(&self) -> i32 {
-        unsafe { pdfium_sys::FPDFPage_GetRotation(self.handle) }
+        unsafe { ffi!(FPDFPage_GetRotation(self.handle)) }
     }
 
     /// Get the page bounding box (CropBox, falls back to MediaBox).
@@ -44,7 +45,7 @@ impl Page<'_> {
             right: 0.0,
             bottom: 0.0,
         };
-        let ok = unsafe { pdfium_sys::FPDF_GetPageBoundingBox(self.handle, &mut rect) };
+        let ok = unsafe { ffi!(FPDF_GetPageBoundingBox(self.handle, &mut rect)) };
         if ok != 0 {
             Some(RectF {
                 left: rect.left,
@@ -75,7 +76,7 @@ impl Page<'_> {
         let mut dy: i32 = 0;
 
         unsafe {
-            pdfium_sys::FPDF_PageToDevice(
+            ffi!(FPDF_PageToDevice(
                 self.handle,
                 0,
                 0,
@@ -86,7 +87,7 @@ impl Page<'_> {
                 page_y as f64,
                 &mut dx,
                 &mut dy,
-            );
+            ));
         }
 
         (dx as f32 / 1000.0, dy as f32 / 1000.0)
@@ -107,7 +108,7 @@ impl Page<'_> {
     }
 
     pub fn text(&self) -> Result<TextPage<'_>, PdfiumError> {
-        let handle = unsafe { pdfium_sys::FPDFText_LoadPage(self.handle) };
+        let handle = unsafe { ffi!(FPDFText_LoadPage(self.handle)) };
         if handle.is_null() {
             return Err(PdfiumError::OperationFailed);
         }
@@ -131,7 +132,7 @@ impl Page<'_> {
         let flags = (pdfium_sys::FPDF_ANNOT | pdfium_sys::FPDF_PRINTING) as i32;
 
         unsafe {
-            pdfium_sys::FPDF_RenderPageBitmap(
+            ffi!(FPDF_RenderPageBitmap(
                 bitmap.handle(),
                 self.handle,
                 0,      // start_x
@@ -140,7 +141,7 @@ impl Page<'_> {
                 height, // size_y
                 0,      // rotation
                 flags,
-            );
+            ));
         }
 
         Ok(bitmap)
@@ -153,16 +154,16 @@ impl Page<'_> {
     pub fn image_bounds(&self, min_size_pt: f32, max_page_coverage: f32) -> Vec<ImageBounds> {
         let page_width = self.width();
         let page_height = self.height();
-        let obj_count = unsafe { pdfium_sys::FPDFPage_CountObjects(self.handle) };
+        let obj_count = unsafe { ffi!(FPDFPage_CountObjects(self.handle)) };
         let mut results = Vec::new();
 
         for i in 0..obj_count {
-            let obj = unsafe { pdfium_sys::FPDFPage_GetObject(self.handle, i) };
+            let obj = unsafe { ffi!(FPDFPage_GetObject(self.handle, i)) };
             if obj.is_null() {
                 continue;
             }
 
-            let obj_type = unsafe { pdfium_sys::FPDFPageObj_GetType(obj) };
+            let obj_type = unsafe { ffi!(FPDFPageObj_GetType(obj)) };
             if obj_type != pdfium_sys::FPDF_PAGEOBJ_IMAGE as i32 {
                 continue;
             }
@@ -172,7 +173,13 @@ impl Page<'_> {
             let mut right: f32 = 0.0;
             let mut top: f32 = 0.0;
             let ok = unsafe {
-                pdfium_sys::FPDFPageObj_GetBounds(obj, &mut left, &mut bottom, &mut right, &mut top)
+                ffi!(FPDFPageObj_GetBounds(
+                    obj,
+                    &mut left,
+                    &mut bottom,
+                    &mut right,
+                    &mut top
+                ))
             };
             if ok == 0 {
                 continue;
@@ -203,22 +210,26 @@ impl Page<'_> {
     /// Get the rendered bitmap of a specific embedded image object by index.
     /// The index corresponds to the order from iterating page objects (image objects only).
     pub fn render_image_object(&self, image_obj_index: usize) -> Result<Bitmap, PdfiumError> {
-        let obj_count = unsafe { pdfium_sys::FPDFPage_CountObjects(self.handle) };
+        let obj_count = unsafe { ffi!(FPDFPage_CountObjects(self.handle)) };
         let mut image_idx = 0usize;
 
         for i in 0..obj_count {
-            let obj = unsafe { pdfium_sys::FPDFPage_GetObject(self.handle, i) };
+            let obj = unsafe { ffi!(FPDFPage_GetObject(self.handle, i)) };
             if obj.is_null() {
                 continue;
             }
-            let obj_type = unsafe { pdfium_sys::FPDFPageObj_GetType(obj) };
+            let obj_type = unsafe { ffi!(FPDFPageObj_GetType(obj)) };
             if obj_type != pdfium_sys::FPDF_PAGEOBJ_IMAGE as i32 {
                 continue;
             }
 
             if image_idx == image_obj_index {
                 let bmp_handle = unsafe {
-                    pdfium_sys::FPDFImageObj_GetRenderedBitmap(self.doc_handle, self.handle, obj)
+                    ffi!(FPDFImageObj_GetRenderedBitmap(
+                        self.doc_handle,
+                        self.handle,
+                        obj
+                    ))
                 };
                 if bmp_handle.is_null() {
                     return Err(PdfiumError::OperationFailed);
@@ -291,6 +302,6 @@ impl Page<'_> {
 
 impl Drop for Page<'_> {
     fn drop(&mut self) {
-        unsafe { pdfium_sys::FPDF_ClosePage(self.handle) };
+        unsafe { ffi!(FPDF_ClosePage(self.handle)) };
     }
 }

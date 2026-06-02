@@ -41,6 +41,7 @@ class LiteparseProvider(ParserProvider):
             max_pages=max_pages,
             dpi=dpi,
             preserve_very_small_text=preserve_very_small_text,
+            quiet=True,
         )
 
     def extract_text(self, file_path: Path) -> str:

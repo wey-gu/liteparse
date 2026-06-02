@@ -19,7 +19,11 @@ from liteparse_eval.providers import (
     AnthropicProvider,
     LiteparseProvider,
     MarkItDownProvider,
+    OpenDataLoaderProvider,
+    PdfToTextProvider,
     PyMuPDFProvider,
+    PyMuPDF4LLMMarkdownProvider,
+    PyMuPDF4LLMTextProvider,
     PyPDFProvider,
 )
 
@@ -423,7 +427,7 @@ def main():
     parser.add_argument(
         "--parse-provider",
         type=str,
-        choices=["pymupdf", "pypdf", "markitdown", "liteparse"],
+        choices=["pymupdf", "pypdf", "markitdown", "liteparse", "pdftotext", "pymupdf4llm-text", "pymupdf4llm-md", "opendataloader"],
         default="liteparse",
         help="Parse provider to use for text extraction. (default: liteparse)"
     )
@@ -438,16 +442,19 @@ def main():
     args = parser.parse_args()
 
     # Initialize parser provider
-    if args.parse_provider == "pymupdf":
-        parser_provider = PyMuPDFProvider()
-    elif args.parse_provider == "pypdf":
-        parser_provider = PyPDFProvider()
-    elif args.parse_provider == "markitdown":
-        parser_provider = MarkItDownProvider()
-    elif args.parse_provider == "liteparse":
-        parser_provider = LiteparseProvider()
-    else:
+    provider_map = {
+        "pymupdf": PyMuPDFProvider,
+        "pypdf": PyPDFProvider,
+        "markitdown": MarkItDownProvider,
+        "liteparse": LiteparseProvider,
+        "pdftotext": PdfToTextProvider,
+        "pymupdf4llm-text": PyMuPDF4LLMTextProvider,
+        "pymupdf4llm-md": PyMuPDF4LLMMarkdownProvider,
+        "opendataloader": OpenDataLoaderProvider,
+    }
+    if args.parse_provider not in provider_map:
         raise ValueError("Please specify a valid parser provider using --parse-provider")
+    parser_provider = provider_map[args.parse_provider]()
 
     # Initialize LLM provider
     if args.llm_provider == "anthropic":

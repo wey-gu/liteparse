@@ -22,7 +22,6 @@ fn main() {
         )
     });
 
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
@@ -44,19 +43,16 @@ fn main() {
         println!("cargo:rustc-link-lib=static=wasi-emulated-signal");
         println!("cargo:lib_path={}", lib_dir.display());
     } else {
-        // On Windows MSVC the import library is named `pdfium.dll.lib`, so
-        // we must pass `pdfium.dll` as the lib name (the linker appends `.lib`).
-        if target_os == "windows" {
-            println!("cargo:rustc-link-lib=dylib=pdfium.dll");
-        } else {
-            println!("cargo:rustc-link-lib=dylib=pdfium");
-        }
+        // Non-wasm: pdfium is loaded at runtime via libloading (no link-time
+        // dynamic dependency). We bake the lib directory path into the binary
+        // so the runtime loader knows where to find the shared library.
         println!("cargo:lib_path={}", lib_dir.display());
+        println!("cargo:rustc-env=PDFIUM_LIB_DIR={}", lib_dir.display());
 
-        // Copy the dylib into OUT_DIR so it's on the rpath that cargo sets
-        // for crates with `links = ...`. This is needed on macOS where the
-        // dylib's install name is @rpath/libpdfium.dylib.
-        // On Windows the DLL lives in bin/, not lib/.
+        // Copy the dylib into target/<profile>/deps/ so that CI scripts and
+        // packaging tools (copy-pdfium.sh, maturin wheel bundling) can find it
+        // in the build tree. This is NOT for linking — just discoverability.
+        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
         let dll_dir = if target_os == "windows" {
             lib_dir
                 .parent()
@@ -215,9 +211,9 @@ fn fix_dylib_install_name(dir: &Path) {
     }
 }
 
-/// Copy the pdfium shared library into `target/<profile>/deps/` so the
-/// runtime dynamic linker can find it. Cargo includes this directory in
-/// the rpath of test and binary artifacts.
+/// Copy the pdfium shared library into `target/<profile>/deps/` so that
+/// CI scripts and packaging tools can find it in the build tree.
+/// This is NOT for linking — pdfium is loaded at runtime via libloading.
 fn copy_dylib_to_target_deps(lib_dir: &Path) {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
 

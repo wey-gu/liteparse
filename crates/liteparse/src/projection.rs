@@ -68,18 +68,19 @@ fn compute_median_textbox_size(items: &[ProjectedTextItem]) -> (f32, f32) {
     widths.sort_by(|a, b| a.total_cmp(b));
     heights.sort_by(|a, b| a.total_cmp(b));
 
-    let mid = widths.len() / 2;
+    let width_mid = widths.len() / 2;
+    let height_mid = heights.len() / 2;
 
     let median_width = if widths.len().is_multiple_of(2) {
-        (widths[mid - 1] + widths[mid]) / 2.0
+        (widths[width_mid - 1] + widths[width_mid]) / 2.0
     } else {
-        widths[mid]
+        widths[width_mid]
     };
 
     let median_height = if heights.len().is_multiple_of(2) {
-        (heights[mid - 1] + heights[mid]) / 2.0
+        (heights[height_mid - 1] + heights[height_mid]) / 2.0
     } else {
-        heights[mid]
+        heights[height_mid]
     };
 
     (median_width, median_height)
@@ -92,7 +93,10 @@ fn canonical_rotation(rotation: f32) -> i32 {
     let mut best = 0.0f32;
     let mut best_delta = f32::INFINITY;
     for c in candidates {
-        let delta = (r - c).abs();
+        // Circular angular distance, so rotations just under 360° are treated
+        // as near 0° (e.g. 359° is 1° from upright, not 89° from 270°).
+        let raw = (r - c).abs();
+        let delta = raw.min(360.0 - raw);
         if delta < best_delta {
             best_delta = delta;
             best = c;
@@ -1509,7 +1513,11 @@ fn project_to_grid(
     page: &Page,
     mut projection_boxes: Vec<ProjectedTextItem>,
 ) -> (Vec<ProjectedTextItem>, String) {
-    // Step 1a: Filter out items that are purely dots
+    if projection_boxes.is_empty() {
+        return (Vec::new(), String::new());
+    }
+
+    // Filter out items that are purely dots
     let mut dot_count = 0usize;
     projection_boxes.iter().for_each(|item| {
         if item
@@ -1532,19 +1540,19 @@ fn project_to_grid(
         });
     }
 
-    // Step 1b: Round dimensions
+    // Round dimensions
     for item in projection_boxes.iter_mut() {
         item.item.width = item.item.width.round();
         item.item.height = item.item.height.round();
     }
 
-    // Step 1c: Compute median distances
+    // Compute median distances
     let (median_width, median_height) = compute_median_textbox_size(&projection_boxes);
 
-    // Step 1d: Handle reading order rotations
+    // Handle reading order rotations
     handle_rotation_reading_order(&mut projection_boxes, page.page_height);
 
-    // Step 1e: Form lines of boxes
+    // Form lines of boxes
     let mut lines = form_lines(
         &mut projection_boxes,
         median_width,
@@ -1555,7 +1563,7 @@ fn project_to_grid(
         return (Vec::new(), String::new());
     }
 
-    // Step 2: Segment into blocks
+    // Segment into blocks
     let blocks = segment_blocks(&lines);
 
     let debug = std::env::var("LITEPARSE_DEBUG").is_ok();
@@ -2548,8 +2556,6 @@ fn project_to_grid(
         Vec::with_capacity(lines.iter().map(|l| l.len()).sum());
     for (line_idx, line) in lines.into_iter().enumerate() {
         for (box_idx, mut item) in line.into_iter().enumerate() {
-            item.item.x = meta[line_idx][box_idx].projected_x as f32;
-            item.item.y = line_idx as f32;
             item.force_unsnapped = meta[line_idx][box_idx].force_unsnapped;
             item.num_spaces = meta[line_idx][box_idx].should_space;
 
@@ -2638,6 +2644,11 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
                 .text_items
                 .iter()
                 .map(|item| ProjectedTextItem {
+                    orig_x: item.x,
+                    orig_y: item.y,
+                    orig_width: item.width,
+                    orig_height: item.height,
+                    orig_rotation: item.rotation,
                     item: item.clone(),
                     snap: Snap::Left,
                     anchor: Anchor::Left,
@@ -2657,8 +2668,118 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
                 page_width: page.page_width,
                 page_height: page.page_height,
                 text,
-                text_items: projected_items.into_iter().map(|proj| proj.item).collect(),
+                text_items: projected_items
+                    .into_iter()
+                    .map(|proj| TextItem {
+                        x: proj.orig_x,
+                        y: proj.orig_y,
+                        width: proj.orig_width,
+                        height: proj.orig_height,
+                        rotation: proj.orig_rotation,
+                        ..proj.item
+                    })
+                    .collect(),
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projected_item(text: &str, y: f32, width: f32, height: f32) -> ProjectedTextItem {
+        ProjectedTextItem {
+            item: TextItem {
+                text: text.to_string(),
+                x: 10.0,
+                y,
+                width,
+                height,
+                ..Default::default()
+            },
+            snap: Snap::Left,
+            anchor: Anchor::Left,
+            is_dup: false,
+            rendered: false,
+            num_spaces: 0,
+            force_unsnapped: false,
+            is_margin_line_number: false,
+            rotated: false,
+            d: 0.0,
+            orig_x: 10.0,
+            orig_y: y,
+            orig_width: width,
+            orig_height: height,
+            orig_rotation: 0.0,
+        }
+    }
+
+    #[test]
+    fn project_to_grid_handles_text_sparse_zero_width_items() {
+        let page = Page {
+            page_number: 1,
+            page_width: 612.0,
+            page_height: 792.0,
+            text_items: Vec::new(),
+        };
+        let projection_boxes = vec![
+            projected_item("", 10.0, 0.0, 10.0),
+            projected_item("", 30.0, 0.0, 20.0),
+        ];
+
+        let (_, text) = project_to_grid(&page, projection_boxes);
+
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn project_pages_to_grid_handles_page_with_no_text_items() {
+        let pages = vec![Page {
+            page_number: 1,
+            page_width: 612.0,
+            page_height: 792.0,
+            text_items: Vec::new(),
+        }];
+
+        let parsed = project_pages_to_grid(pages);
+
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].text.is_empty());
+        assert!(parsed[0].text_items.is_empty());
+    }
+
+    #[test]
+    fn canonical_rotation_snaps_cardinals_and_near_cardinals() {
+        // Exact cardinals are unchanged.
+        assert_eq!(canonical_rotation(0.0), 0);
+        assert_eq!(canonical_rotation(90.0), 90);
+        assert_eq!(canonical_rotation(180.0), 180);
+        assert_eq!(canonical_rotation(270.0), 270);
+
+        // Small offsets within the 2° tolerance snap to the nearest cardinal.
+        assert_eq!(canonical_rotation(1.0), 0);
+        assert_eq!(canonical_rotation(88.5), 90);
+        assert_eq!(canonical_rotation(271.0), 270);
+    }
+
+    #[test]
+    fn canonical_rotation_snaps_near_360_to_zero() {
+        // Rotations just under 360° are ~upright and must snap to 0, not be
+        // treated as ~270° (regression: linear distance picked 270 for 359°).
+        assert_eq!(canonical_rotation(358.0), 0);
+        assert_eq!(canonical_rotation(359.0), 0);
+        assert_eq!(canonical_rotation(359.5), 0);
+        // rem_euclid normalizes out-of-range / negative inputs first.
+        assert_eq!(canonical_rotation(360.0), 0);
+        assert_eq!(canonical_rotation(-1.0), 0);
+    }
+
+    #[test]
+    fn canonical_rotation_passes_through_non_cardinal_angles() {
+        // Beyond the 2° snap tolerance the rounded raw angle is returned,
+        // including angles near (but not within tolerance of) 360°.
+        assert_eq!(canonical_rotation(45.0), 45);
+        assert_eq!(canonical_rotation(357.0), 357);
+    }
 }

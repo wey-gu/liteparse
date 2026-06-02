@@ -1,4 +1,5 @@
 use crate::error::PdfiumError;
+use crate::ffi;
 use crate::page::Page;
 
 pub struct Document {
@@ -7,11 +8,11 @@ pub struct Document {
 
 impl Document {
     pub fn page_count(&self) -> i32 {
-        unsafe { pdfium_sys::FPDF_GetPageCount(self.handle) }
+        unsafe { ffi!(FPDF_GetPageCount(self.handle)) }
     }
 
     pub fn page(&self, index: i32) -> Result<Page<'_>, PdfiumError> {
-        let handle = unsafe { pdfium_sys::FPDF_LoadPage(self.handle, index) };
+        let handle = unsafe { ffi!(FPDF_LoadPage(self.handle, index)) };
         if handle.is_null() {
             return Err(PdfiumError::PageNotFound);
         }
@@ -25,6 +26,6 @@ impl Document {
 
 impl Drop for Document {
     fn drop(&mut self) {
-        unsafe { pdfium_sys::FPDF_CloseDocument(self.handle) };
+        unsafe { ffi!(FPDF_CloseDocument(self.handle)) };
     }
 }

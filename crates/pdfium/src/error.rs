@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::ffi;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfiumError {
     Unknown,
@@ -13,7 +15,7 @@ pub enum PdfiumError {
 
 impl PdfiumError {
     pub(crate) fn from_last_error() -> Self {
-        let code = unsafe { pdfium_sys::FPDF_GetLastError() };
+        let code = unsafe { ffi!(FPDF_GetLastError()) };
         match code as u32 {
             pdfium_sys::FPDF_ERR_FILE => PdfiumError::FileNotFound,
             pdfium_sys::FPDF_ERR_FORMAT => PdfiumError::InvalidFormat,

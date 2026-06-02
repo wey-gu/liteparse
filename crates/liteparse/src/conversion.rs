@@ -419,10 +419,14 @@ pub async fn convert_office_document(
     let user_profile_dir = tempfile::Builder::new()
         .prefix("liteparse-lo-profile-")
         .tempdir()?;
-    let user_profile_url = format!(
-        "-env:UserInstallation=file://{}",
-        user_profile_dir.path().to_string_lossy()
-    );
+    let user_profile_file_url =
+        url::Url::from_file_path(user_profile_dir.path()).map_err(|_| {
+            LiteParseError::Conversion(format!(
+                "failed to convert temp profile path to file URL: {}",
+                user_profile_dir.path().display()
+            ))
+        })?;
+    let user_profile_url = format!("-env:UserInstallation={user_profile_file_url}");
     let infilter_arg;
     let mut args: Vec<&str> = vec![
         &user_profile_url,

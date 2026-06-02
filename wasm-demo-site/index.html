@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiteParse - Browser PDF Parser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --black: #000000;
+      --off-white: #F5F5F5;
+      --light-grey: #E7E7E7;
+      --dark-grey: #737373;
+      --vibrant-blue: #37D7FA;
+      --mid-purple: #4B72FE;
+      --vibrant-pink: #FF8DF2;
+      --vibrant-orange: #FF8705;
+      --light-blue: #96E7F9;
+      --light-purple: #92AEFF;
+      --font-sans: system-ui, -apple-system, sans-serif;
+      --font-mono: 'IBM Plex Mono', monospace;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--off-white);
+      color: var(--black);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header */
+    header {
+      background: var(--black);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    header svg { height: 32px; width: auto; }
+
+    header .divider {
+      width: 1px;
+      height: 24px;
+      background: #444;
+    }
+
+    header h1 {
+      color: white;
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    header .badge {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      background: linear-gradient(135deg, var(--vibrant-blue), var(--mid-purple));
+      color: white;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+
+    /* Main */
+    main {
+      flex: 1;
+      max-width: 960px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+    }
+
+    .hero {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .hero h2 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+
+    .hero p {
+      color: var(--dark-grey);
+      font-size: 1rem;
+      max-width: 540px;
+      margin: 0 auto;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed var(--light-grey);
+      border-radius: 12px;
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      background: white;
+      position: relative;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover {
+      border-color: var(--mid-purple);
+      background: #f0f0ff;
+    }
+
+    .drop-zone-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.75rem;
+      display: block;
+    }
+
+    .drop-zone-text {
+      font-size: 1rem;
+      color: var(--dark-grey);
+    }
+
+    .drop-zone-text strong {
+      color: var(--mid-purple);
+    }
+
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    /* Status */
+    #status {
+      text-align: center;
+      margin: 1.25rem 0;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--dark-grey);
+      min-height: 1.25rem;
+    }
+
+    #status.loading { color: var(--mid-purple); }
+    #status.success { color: #16a34a; }
+    #status.error { color: #dc2626; }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .controls label {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--dark-grey);
+    }
+
+    .controls select {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      padding: 0.35rem 0.5rem;
+      border: 1px solid var(--light-grey);
+      border-radius: 6px;
+      background: white;
+    }
+
+    .controls .spacer { flex: 1; }
+
+    .controls button {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      padding: 0.35rem 0.75rem;
+      border: 1px solid var(--light-grey);
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .controls button:hover { background: var(--off-white); }
+
+    /* Output */
+    .output-container {
+      display: none;
+    }
+
+    .output-container.visible { display: block; }
+
+    #output {
+      background: var(--black);
+      color: #e0e0e0;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.5;
+      padding: 1.25rem;
+      border-radius: 10px;
+      overflow: auto;
+      max-height: 500px;
+      white-space: pre;
+      word-break: normal;
+    }
+
+    /* Stats bar */
+    .stats {
+      display: flex;
+      gap: 1.5rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--dark-grey);
+    }
+
+    .stat strong {
+      color: var(--black);
+    }
+
+    /* Code snippet */
+    .code-section {
+      margin-top: 3rem;
+    }
+
+    .code-section h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .code-block {
+      background: var(--black);
+      color: #e0e0e0;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.6;
+      padding: 1.25rem;
+      border-radius: 10px;
+      overflow-x: auto;
+    }
+
+    .code-block .kw { color: var(--vibrant-pink); }
+    .code-block .str { color: var(--vibrant-blue); }
+    .code-block .cmt { color: #666; }
+    .code-block .fn { color: var(--vibrant-orange); }
+    .code-block .const { color: var(--light-purple); }
+
+    /* Install bar */
+    .install-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: var(--black);
+      border-radius: 8px;
+      padding: 0.6rem 1rem;
+      margin-bottom: 2rem;
+      max-width: 420px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .install-bar code {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: #e0e0e0;
+      flex: 1;
+    }
+
+    .install-bar .prompt { color: var(--vibrant-blue); }
+
+    .install-bar button {
+      background: none;
+      border: none;
+      color: var(--dark-grey);
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 0.2rem;
+      transition: color 0.15s;
+    }
+
+    .install-bar button:hover { color: white; }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--dark-grey);
+      border-top: 1px solid var(--light-grey);
+    }
+
+    footer a {
+      color: var(--mid-purple);
+      text-decoration: none;
+    }
+
+    footer a:hover { text-decoration: underline; }
+
+    /* Gradient accent line under header */
+    .accent-line {
+      height: 3px;
+      background: linear-gradient(90deg, var(--vibrant-blue), var(--mid-purple), var(--vibrant-pink), var(--vibrant-orange));
+    }
+
+    @media (max-width: 600px) {
+      main { padding: 1.5rem 1rem; }
+      .hero h2 { font-size: 1.4rem; }
+      .drop-zone { padding: 2rem 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <!-- LlamaIndex icon (gradient llama in rounded square) -->
+    <svg viewBox="94 94 94.05 94.05" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M173.05 94H109C100.716 94 94 100.716 94 109V173.05C94 181.334 100.716 188.05 109 188.05H173.05C181.334 188.05 188.05 181.334 188.05 173.05V109C188.05 100.716 181.334 94 173.05 94Z" fill="black"/>
+      <path d="M165.48 175.22C165.48 175.22 169.63 168.31 159.92 163.36C159.92 163.36 161.8 170.75 157.4 177.6H152.88C152.88 177.6 152.68 176.16 154.59 175.43C158.59 173.89 158.75 167.32 157.58 166.53C154.01 164.13 152.6 162.08 153.52 156.86C153.52 156.86 147.34 159.12 139.66 158.15C139.26 158.1 138.87 158.29 138.67 158.64C138.26 159.35 137.43 160.63 136.06 162.11C136.06 162.11 135.71 166.2 134.79 169.11C134.79 169.11 135.14 174.09 133.88 177.59H128.48C128.48 177.59 128.54 175.42 131.14 175.14C134.32 174.8 130.57 164.91 130.57 164.91C130.57 164.91 130.41 170.3 127.17 177.57H123.04C123.04 177.57 123.04 175.47 125.14 174.95C128.55 174.1 127.03 167.96 126.48 164.55C125.93 161.13 125.16 154.74 122.37 151.19C119.58 147.64 118.16 147.67 117.99 141.15C117.99 141.15 115.62 137.41 116.47 132.48C116.47 132.48 114.7 126.56 117.36 117.81C117.36 117.81 111.07 116.53 110.95 114.97C110.82 113.41 111.29 111.64 112.97 111.49C114.65 111.34 117.11 111.09 117.12 109.32C117.12 107.55 114.98 105.2 116.31 104.51C117.55 103.86 118.99 108.05 119.94 107.39C120.56 106.96 118.25 104.7 119.76 105.01C120.38 105.14 125.64 106.88 127.42 116.06C129.2 125.24 128.46 131.37 131.03 131.37C133.6 131.37 145.35 130.94 152.21 132.62C159.07 134.3 159.35 136.93 162.36 136.17C165.37 135.41 168.83 133.59 170.79 140.26C172.52 146.13 167.66 145.39 167.66 147.23C167.66 149.07 167.01 151.92 167.75 153.66C168.49 155.4 168.08 159.6 168.73 161.98C169.38 164.36 170.16 166.52 168.69 169.59C168.69 169.59 169.41 174.76 167.79 177.6H163.89C163.89 177.6 163.61 175.98 165.51 175.22H165.48Z" fill="url(#icon-grad)"/>
+      <defs>
+        <linearGradient id="icon-grad" x1="108.11" y1="106.46" x2="164.85" y2="182.26" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#37D7FA"/>
+          <stop offset="0.4" stop-color="#4B72FE"/>
+          <stop offset="0.68" stop-color="#FF8DF2"/>
+          <stop offset="1" stop-color="#FF8705"/>
+        </linearGradient>
+      </defs>
+    </svg>
+    <div class="divider"></div>
+    <h1>LiteParse</h1>
+    <span class="badge">WASM</span>
+  </header>
+  <div class="accent-line"></div>
+
+  <main>
+    <div class="hero">
+      <h2>PDF Parsing in the Browser</h2>
+      <p>Fast, lightweight document parsing powered by WebAssembly. No server required &mdash; everything runs locally in your browser.</p>
+    </div>
+
+    <div class="install-bar">
+      <code><span class="prompt">$</span> npm install <strong>@llamaindex/liteparse-wasm</strong></code>
+      <button onclick="navigator.clipboard.writeText('npm install @llamaindex/liteparse-wasm')" title="Copy">&#x2398;</button>
+    </div>
+
+    <div class="drop-zone" id="drop-zone">
+      <input type="file" id="pdf-input" accept=".pdf" />
+      <span class="drop-zone-icon">&#128196;</span>
+      <div class="drop-zone-text">
+        Drop a PDF here or <strong>click to browse</strong>
+      </div>
+    </div>
+
+    <div id="status"></div>
+
+    <div class="output-container" id="output-container">
+      <div class="controls">
+        <label for="format-select">Output:</label>
+        <select id="format-select">
+          <option value="text">Plain Text</option>
+          <option value="json">JSON (with bounding boxes)</option>
+        </select>
+        <div class="spacer"></div>
+        <button id="copy-btn">Copy</button>
+      </div>
+      <pre id="output"></pre>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="code-section">
+      <h3>Usage</h3>
+      <pre class="code-block"><span class="kw">import</span> <span class="const">init</span>, { <span class="const">LiteParse</span> } <span class="kw">from</span> <span class="str">"@llamaindex/liteparse-wasm"</span>;
+
+<span class="cmt">// Initialize the WASM module</span>
+<span class="kw">await</span> <span class="fn">init</span>();
+
+<span class="cmt">// Create a parser instance</span>
+<span class="kw">const</span> <span class="const">parser</span> = <span class="kw">new</span> <span class="fn">LiteParse</span>({ <span class="const">outputFormat</span>: <span class="str">"json"</span> });
+
+<span class="cmt">// Parse PDF bytes (Uint8Array from File, fetch, etc.)</span>
+<span class="kw">const</span> <span class="const">bytes</span> = <span class="kw">new</span> <span class="fn">Uint8Array</span>(<span class="kw">await</span> file.<span class="fn">arrayBuffer</span>());
+<span class="kw">const</span> <span class="const">result</span> = <span class="kw">await</span> parser.<span class="fn">parse</span>(<span class="const">bytes</span>);
+
+console.<span class="fn">log</span>(<span class="const">result</span>.text);           <span class="cmt">// full document text</span>
+console.<span class="fn">log</span>(<span class="const">result</span>.pages[<span class="const">0</span>].textItems); <span class="cmt">// items with bounding boxes</span></pre>
+    </div>
+  </main>
+
+  <footer>
+    <a href="https://github.com/run-llama/liteparse">GitHub</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://www.npmjs.com/package/@llamaindex/liteparse-wasm">npm</a>
+    &nbsp;&middot;&nbsp;
+    Built by <a href="https://www.llamaindex.ai">LlamaIndex</a>
+  </footer>
+
+  <script type="module">
+    const status = document.getElementById("status");
+    const output = document.getElementById("output");
+    const outputContainer = document.getElementById("output-container");
+    const statsEl = document.getElementById("stats");
+    const dropZone = document.getElementById("drop-zone");
+    const fileInput = document.getElementById("pdf-input");
+    const formatSelect = document.getElementById("format-select");
+    const copyBtn = document.getElementById("copy-btn");
+
+    let lastResult = null;
+
+    function setStatus(msg, type) {
+      status.textContent = msg;
+      status.className = type || "";
+    }
+
+    // --- Load WASM from CDN ---
+    setStatus("Loading WASM module...", "loading");
+
+    let LiteParse;
+    try {
+      const mod = await import(
+        "https://cdn.jsdelivr.net/npm/@llamaindex/liteparse-wasm@2/pkg/liteparse_wasm.js"
+      );
+      await mod.default(
+        "https://cdn.jsdelivr.net/npm/@llamaindex/liteparse-wasm@2/pkg/liteparse_wasm_bg.wasm"
+      );
+      LiteParse = mod.LiteParse;
+      setStatus("Ready. Drop a PDF to parse.", "success");
+    } catch (err) {
+      setStatus("Failed to load WASM module: " + err.message, "error");
+      console.error(err);
+    }
+
+    // --- Drag and drop ---
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("dragover");
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("dragover");
+      const file = e.dataTransfer.files[0];
+      if (file && file.type === "application/pdf") {
+        parseFile(file);
+      } else {
+        setStatus("Please drop a PDF file.", "error");
+      }
+    });
+
+    fileInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) parseFile(file);
+    });
+
+    // --- Parse ---
+    async function parseFile(file) {
+      if (!LiteParse) {
+        setStatus("WASM module not loaded yet.", "error");
+        return;
+      }
+
+      setStatus(`Parsing "${file.name}"...`, "loading");
+      outputContainer.classList.remove("visible");
+
+      try {
+        const t0 = performance.now();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const parser = new LiteParse({
+          ocrEnabled: false,
+          outputFormat: "json",
+          quiet: true,
+        });
+        const result = await parser.parse(bytes);
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+
+        lastResult = result;
+        setStatus(`Parsed ${result.pages.length} page(s) in ${elapsed}s`, "success");
+        renderOutput();
+
+        statsEl.innerHTML = [
+          `<span class="stat"><strong>${result.pages.length}</strong> pages</span>`,
+          `<span class="stat"><strong>${result.text.length.toLocaleString()}</strong> chars</span>`,
+          `<span class="stat"><strong>${elapsed}s</strong> elapsed</span>`,
+          `<span class="stat"><strong>${(bytes.length / 1024).toFixed(0)} KB</strong> file size</span>`,
+        ].join("");
+
+        outputContainer.classList.add("visible");
+      } catch (err) {
+        setStatus("Parse error: " + err.toString(), "error");
+        console.error(err);
+      }
+    }
+
+    // --- Render output ---
+    function renderOutput() {
+      if (!lastResult) return;
+      if (formatSelect.value === "text") {
+        output.textContent = lastResult.text;
+      } else {
+        output.textContent = JSON.stringify(lastResult, null, 2);
+      }
+    }
+
+    formatSelect.addEventListener("change", renderOutput);
+
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(output.textContent);
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+    });
+  </script>
+</body>
+</html>

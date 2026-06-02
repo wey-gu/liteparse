@@ -5,13 +5,16 @@ description = "Utilities for generating and evaluating datasets for PDF parsing 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "anthropic>=0.76.0",
-    "pillow>=10.0.0",
-    "pymupdf>=1.26.7",
-    "pypdf>=6.6.2",
-    "markitdown[all]",
-    "rapidfuzz>=3.14.3",
-    "liteparse @ file:///${PROJECT_ROOT}/../packages/python",
+    "anthropic>=0.104.1",
+    "pillow>=12.2.0",
+    "pymupdf>=1.27.2",
+    "pymupdf4llm>=1.27.2",
+    "pypdf>=6.12.1",
+    "pdftotext>=3.0.0",
+    "markitdown[all]>=0.1.5",
+    "opendataloader-pdf>=2.4.1",
+    "rapidfuzz>=3.14.5",
+    "liteparse>=2.0.0",
 ]
 
 [project.scripts]

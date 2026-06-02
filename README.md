@@ -18,15 +18,15 @@
 
 > Looking for LiteParse V1? Follow this link to [the old code](https://github.com/run-llama/liteparse/tree/logan/liteparse-v1)
 
-LiteParse is a standalone OSS PDF parsing tool focused exclusively on **fast and light** parsing. It provides high-quality spatial text parsing with bounding boxes, without proprietary LLM features or cloud dependencies. Everything runs locally on your machine. 
+LiteParse is a standalone OSS PDF parsing tool focused exclusively on **fast and light** parsing. It provides high-quality spatial text parsing with bounding boxes, without proprietary LLM features or cloud dependencies. Everything runs locally on your machine.
 
 **Hitting the limits of local parsing?**
-For complex documents (dense tables, multi-column layouts, charts, handwritten text, or 
-scanned PDFs), you'll get significantly better results with [LlamaParse](https://developers.llamaindex.ai/python/cloud/llamaparse/?utm_source=github&utm_medium=liteparse), 
-our cloud-based document parser built for production document pipelines. LlamaParse handles the 
+For complex documents (dense tables, multi-column layouts, charts, handwritten text, or
+scanned PDFs), you'll get significantly better results with [LlamaParse](https://developers.llamaindex.ai/python/cloud/llamaparse/?utm_source=github&utm_medium=liteparse),
+our cloud-based document parser built for production document pipelines. LlamaParse handles the
 hard stuff so your models see clean, structured data and markdown.
 
->  👉 [Sign up for LlamaParse free](https://cloud.llamaindex.ai?utm_source=github&utm_medium=liteparse)
+>  [Sign up for LlamaParse free](https://cloud.llamaindex.ai?utm_source=github&utm_medium=liteparse)
 
 ## Overview
 
@@ -41,79 +41,87 @@ hard stuff so your models see clean, structured data and markdown.
 - **Multi-language**: Use from Rust, Node.js/TypeScript, Python, or the browser (WASM)
 - **Multi-platform**: Linux, macOS (Intel/ARM), Windows
 
+```mermaid
+flowchart LR
+      subgraph Input["Input Formats"]
+          direction TB
+          PDF["PDF"]
+          DOCX["DOCX"]
+          XLSX["XLSX"]
+          PPTX["PPTX"]
+          IMG["Images"]
+      end
+
+      subgraph Core["Rust Core"]
+          direction TB
+          CONV["Format Conversion\nLibreOffice / ImageMagick"]
+          EXTRACT["Text Extraction\nPDFium C library"]
+          OCR["Selective OCR\nTesseract / HTTP / Custom"]
+          MERGE["OCR Merge\nNative text + OCR results"]
+          PROJ["Grid Projection\nSpatial layout reconstruction"]
+          CONV --> EXTRACT
+          EXTRACT --> OCR --> MERGE --> PROJ
+          EXTRACT --> MERGE
+      end
+
+      subgraph Output[" Output "]
+          direction TB
+          JSON["Structured JSON\ntext + bounding boxes"]
+          TEXT["Plain Text\nlayout-preserved"]
+          SCREEN["Screenshots\nPNG rendering"]
+      end
+
+      subgraph Bindings["Language Bindings"]
+          direction TB
+          NAPI["Node.js / TypeScript\nnapi-rs"]
+          PYO3["Python\nPyO3"]
+          WASM["Browser / WASM\nwasm-bindgen"]
+          CLI["CLI\ncargo / npm / pip"]
+          NAPI ~~~ PYO3 ~~~ WASM ~~~ CLI
+      end
+
+      PDF --> EXTRACT
+      DOCX & XLSX & PPTX & IMG --> CONV
+      PROJ --> JSON & TEXT & SCREEN
+      JSON & TEXT & SCREEN --> Bindings
+
+      style Input fill:#F5F5F5,color:#000000,stroke:#37D7FA,stroke-width:2px
+      style Core fill:#F5F5F5,color:#000000,stroke:#3E18F9,stroke-width:2px
+      style Output fill:#F5F5F5,color:#000000,stroke:#FF8705,stroke-width:2px
+      style Bindings fill:#F5F5F5,color:#000000,stroke:#FF8DF2,stroke-width:2px
+
+      style PDF fill:#96E7F9,color:#000000,stroke:#37D7FA,stroke-width:1px
+      style DOCX fill:#96E7F9,color:#000000,stroke:#37D7FA,stroke-width:1px
+      style XLSX fill:#96E7F9,color:#000000,stroke:#37D7FA,stroke-width:1px
+      style PPTX fill:#96E7F9,color:#000000,stroke:#37D7FA,stroke-width:1px
+      style IMG fill:#96E7F9,color:#000000,stroke:#37D7FA,stroke-width:1px
+
+      style CONV fill:#92AEFF,color:#000000,stroke:#4B72FE,stroke-width:1px
+      style EXTRACT fill:#92AEFF,color:#000000,stroke:#4B72FE,stroke-width:1px
+      style OCR fill:#92AEFF,color:#000000,stroke:#4B72FE,stroke-width:1px
+      style MERGE fill:#92AEFF,color:#000000,stroke:#4B72FE,stroke-width:1px
+      style PROJ fill:#4B72FE,color:#FFFFFF,stroke:#3E18F9,stroke-width:2px
+
+      style JSON fill:#FFBD74,color:#000000,stroke:#FF8705,stroke-width:1px
+      style TEXT fill:#FFBD74,color:#000000,stroke:#FF8705,stroke-width:1px
+      style SCREEN fill:#FFBD74,color:#000000,stroke:#FF8705,stroke-width:1px
+
+      style NAPI fill:#FFBFF8,color:#000000,stroke:#FF8DF2,stroke-width:1px
+      style PYO3 fill:#FFBFF8,color:#000000,stroke:#FF8DF2,stroke-width:1px
+      style WASM fill:#FFBFF8,color:#000000,stroke:#FF8DF2,stroke-width:1px
+      style CLI fill:#FFBFF8,color:#000000,stroke:#FF8DF2,stroke-width:1px
+```
+
 ## Installation
 
-All versions (except WASM) ship with the same CLI and library API. Install the one that fits your environment:
+Install via your preferred package manager. All versions (except WASM) ship with the same `lit` CLI.
 
-<details>
-  <summary>Node.js / TypeScript</summary>
-
-Install via npm to use the `lit` CLI or the library API:
-
-```bash
-npm i -g @llamaindex/liteparse   # CLI (global)
-npm i @llamaindex/liteparse      # Library (project dependency)
-```
-
-Parse your first document right away:
-
-```bash
-lit parse document.pdf
-```
-
-Or use the library API in your Node.js or TypeScript project:
-
-```typescript
-import { LiteParse } from '@llamaindex/liteparse';
-
-const parser = new LiteParse({ ocrEnabled: true });
-
-const result = await parser.parse('document.pdf');
-console.log(result.text);
-```
-</details>
-
-<details>
-  <summary>Python</summary>
-
-Install via pip to use the `lit` CLI or the library API:
-
-```bash
-pip install liteparse
-```
-
-Parse your first document right away:
-
-```bash
-lit parse document.pdf
-```
-
-Or use the library API in your Python project:
-
-```python
-from liteparse import LiteParse
-
-parser = LiteParse(ocr_enabled=True)
-result = parser.parse('document.pdf')
-print(result.text)
-```
-
-</details>
-
-<details>
-  <summary>Browser (WASM)</summary>
-
-You can install a trimmed-down version of LiteParse that runs entirely in the browser, with no server or cloud dependencies.
-
-```bash
-npm install @llamaindex/liteparse-wasm
-```
-
-It supports PDF parsing and custom OCR engines implemented in JavaScript.
-
-See the [WASM package README](packages/wasm/README.md) for usage details.
-
-</details>
+| Language | Install | Library Docs |
+|----------|---------|--------------|
+| **Node.js / TypeScript** | `npm i @llamaindex/liteparse` | [Node.js README](packages/node/README.md) |
+| **Python** | `pip install liteparse` | [Python README](packages/python/README.md) |
+| **Rust** | `cargo install liteparse` (CLI) / `cargo add liteparse` (lib) | [Rust README (crates.io)](crates/liteparse/README.md) |
+| **Browser (WASM)** | `npm i @llamaindex/liteparse-wasm` | [WASM README](packages/wasm/README.md) |
 
 ### Agent Skill
 
@@ -127,7 +135,7 @@ Or copy-pasting the [`SKILL.md`](https://github.com/run-llama/llamaparse-agent-s
 
 ## CLI Usage
 
-The CLI is the same across all installations (`npm`, `pip`, or the Rust binary).
+The CLI is the same across all installations (`npm`, `pip`, `cargo install`).
 
 ### Parse Files
 
@@ -228,39 +236,6 @@ Options:
       --password <password>    Password for encrypted documents
   -q, --quiet                  Suppress progress output
   -h, --help                   Print help
-```
-
-## Library Usage
-
-### Buffer / Uint8Array Input
-
-All APIs that accept file paths also accept raw bytes, so you can parse documents from any source (e.g. HTTP responses, in-memory buffers) without writing to disk first.
-
-The WASM package only accepts `Uint8Array` input, while the Node.js and Python versions accept both file paths and bytes.
-
-```typescript
-import { LiteParse } from '@llamaindex/liteparse';
-
-const parser = new LiteParse();
-
-// From a file read
-const pdfBytes = await readFile('document.pdf');
-const result = await parser.parse(pdfBytes);
-
-// From an HTTP response
-const response = await fetch('https://example.com/document.pdf');
-const buffer = Buffer.from(await response.arrayBuffer());
-const result2 = await parser.parse(buffer);
-```
-
-#### Screenshots
-
-```typescript
-const screenshots = await parser.screenshot('document.pdf', [1, 2, 3]);
-for (const s of screenshots) {
-  console.log(`Page ${s.pageNum}: ${s.width}x${s.height}`);
-  // s.imageBuffer contains PNG bytes
-}
 ```
 
 ## OCR Setup

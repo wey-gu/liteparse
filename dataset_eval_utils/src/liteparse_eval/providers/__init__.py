@@ -3,7 +3,11 @@ from .parsers import (
     ParserProvider,
     LiteparseProvider,
     MarkItDownProvider,
+    OpenDataLoaderProvider,
+    PdfToTextProvider,
     PyMuPDFProvider,
+    PyMuPDF4LLMMarkdownProvider,
+    PyMuPDF4LLMTextProvider,
     PyPDFProvider,
 )
 
@@ -14,6 +18,10 @@ __all__ = [
     "ParserProvider",
     "LiteparseProvider",
     "MarkItDownProvider",
+    "OpenDataLoaderProvider",
+    "PdfToTextProvider",
     "PyMuPDFProvider",
+    "PyMuPDF4LLMMarkdownProvider",
+    "PyMuPDF4LLMTextProvider",
     "PyPDFProvider",
 ]

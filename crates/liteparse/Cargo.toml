@@ -1,10 +1,11 @@
 [package]
 name = "liteparse"
-version = "2.0.0-beta.2"
+version = "2.0.4"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Fast, lightweight PDF and document parsing with spatial text extraction"
+readme = "README.md"
 
 [lib]
 name = "liteparse"
@@ -21,8 +22,9 @@ tesseract = ["dep:tesseract-rs"]
 clap = { version = "4.5.55", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 infer = "0.19.0"
-pdfium = { package = "liteparse-pdfium", version = "1.0.0", path = "../pdfium" }
-pdfium-sys = { package = "liteparse-pdfium-sys", version = "1.0.0", path = "../pdfium-sys" }
+ordered-float = "5.3.0"
+pdfium = { package = "liteparse-pdfium", version = "1.0.1", path = "../pdfium" }
+pdfium-sys = { package = "liteparse-pdfium-sys", version = "1.1.0", path = "../pdfium-sys" }
 reqwest = { version = "0.13.3", default-features = false, features = ["json", "form", "multipart", "rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -30,6 +32,7 @@ tempfile = "3.27.0"
 thiserror = "2"
 tesseract-rs = { version = "0.2", features = ["build-tesseract"], optional = true }
 tokio = { version = "1.52.3", features = ["rt", "macros", "sync", "time", "io-util"] }
+url = "2"
 web-time = "1.1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
