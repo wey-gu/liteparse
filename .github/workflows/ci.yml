@@ -40,7 +40,7 @@ jobs:
   build-and-test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-13, windows-latest, windows-11-arm]
+        os: [ubuntu-latest, macos-latest, macos-26-intel, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

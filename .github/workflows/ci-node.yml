@@ -28,7 +28,7 @@ jobs:
             node-arch: darwin-arm64
             pdfium-dylib: libpdfium.dylib
 
-          - os: macos-13
+          - os: macos-26-intel
             target: x86_64-apple-darwin
             node-arch: darwin-x64
             pdfium-dylib: libpdfium.dylib
@@ -165,7 +165,7 @@ jobs:
         include:
           - os: macos-latest
             node-arch: darwin-arm64
-          - os: macos-13
+          - os: macos-26-intel
             node-arch: darwin-x64
           - os: ubuntu-latest
             node-arch: linux-x64-gnu
