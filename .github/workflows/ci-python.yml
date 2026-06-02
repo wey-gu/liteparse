@@ -98,12 +98,47 @@ jobs:
       - name: Build wheels (musl)
         if: ${{ matrix.musl }}
         uses: PyO3/maturin-action@v1
+        env:
+          # The musllinux_1_2 cross image (messense/rust-musl-cross) ships a
+          # musl-cross GCC whose default specs define _FORTIFY_SOURCE=2. That
+          # makes the C++ build of tesseract (and leptonica) emit calls to
+          # glibc fortify wrappers (__printf_chk, __memcpy_chk, __fprintf_chk,
+          # __vsnprintf_chk, ...) — symbols that DO NOT exist in musl libc, so
+          # linking fails with "undefined reference to __printf_chk".
+          #
+          # We point CC/CXX at wrapper scripts (created in before-script-linux)
+          # that append -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 to every compile,
+          # AFTER tesseract-rs's hard-coded -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS
+          # (which clobber any CFLAGS/CXXFLAGS env var, so flag-based overrides
+          # don't reach the compiler).
+          #
+          # CC_x86_64_unknown_linux_musl / CXX_x86_64_unknown_linux_musl are
+          # the per-target env vars that both cc-rs and cmake-rs honor.
+          CC: /tmp/ccwrap/cc
+          CXX: /tmp/ccwrap/cxx
+          CC_x86_64_unknown_linux_musl: /tmp/ccwrap/cc
+          CXX_x86_64_unknown_linux_musl: /tmp/ccwrap/cxx
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           manylinux: musllinux_1_2
           working-directory: packages/python
           before-script-linux: |
+            # See env block above for context.
+            REAL_CC=$(command -v x86_64-unknown-linux-musl-gcc || command -v musl-gcc || command -v gcc)
+            REAL_CXX=$(command -v x86_64-unknown-linux-musl-g++ || command -v musl-g++ || command -v g++)
+            echo "Wrapping CC=$REAL_CC CXX=$REAL_CXX with FORTIFY-disable shim"
+            mkdir -p /tmp/ccwrap
+            cat > /tmp/ccwrap/cc <<EOF
+            #!/bin/sh
+            exec "$REAL_CC" "\$@" -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+            EOF
+            cat > /tmp/ccwrap/cxx <<EOF
+            #!/bin/sh
+            exec "$REAL_CXX" "\$@" -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+            EOF
+            chmod +x /tmp/ccwrap/cc /tmp/ccwrap/cxx
+
             if command -v apk &> /dev/null; then
               apk add --no-cache tesseract-ocr-dev leptonica-dev openssl-dev pkgconf build-base cmake perl
             elif command -v yum &> /dev/null; then
