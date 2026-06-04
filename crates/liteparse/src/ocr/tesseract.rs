@@ -1,7 +1,10 @@
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use super::{OcrEngine, OcrOptions, OcrResult};
 use tesseract_rs::{TessPageIteratorLevel, TesseractAPI};
+
+const TESSDATA_BASE_URL: &str = "https://github.com/tesseract-ocr/tessdata_best/raw/main";
 
 pub struct TesseractOcrEngine {
     tessdata_path: Option<String>,
@@ -63,15 +66,9 @@ impl OcrEngine for TesseractOcrEngine {
                 .clone()
                 .or_else(|| std::env::var("TESSDATA_PREFIX").ok());
 
-            match &tessdata_path {
-                Some(path) => api.init(path, language)?,
-                None => {
-                    // tesseract-rs with build-tesseract downloads eng.traineddata automatically
-                    // and caches it; use its default path
-                    let default_path = default_tessdata_dir();
-                    api.init(&default_path, language)?;
-                }
-            }
+            let resolved_path = tessdata_path.unwrap_or_else(default_tessdata_dir);
+            ensure_traineddata(Path::new(&resolved_path), language).await?;
+            api.init(&resolved_path, language)?;
 
             // Set image from raw RGB bytes (3 bytes per pixel)
             let bytes_per_pixel = 3;
@@ -117,7 +114,9 @@ impl OcrEngine for TesseractOcrEngine {
     }
 }
 
-/// Default tessdata directory used by tesseract-rs build-tesseract feature.
+/// Default tessdata directory. Matches the locations used by tesseract-rs's
+/// build-tesseract feature so any traineddata it downloaded at build time is
+/// also picked up here.
 fn default_tessdata_dir() -> String {
     #[cfg(target_os = "macos")]
     {
@@ -131,7 +130,64 @@ fn default_tessdata_dir() -> String {
             return format!("{}/.tesseract-rs/tessdata", home);
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(base) = std::env::var("APPDATA").ok().or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .map(|p| format!("{}\\AppData\\Roaming", p))
+        }) {
+            return format!("{}\\tesseract-rs\\tessdata", base);
+        }
+    }
     "tessdata".to_string()
+}
+
+/// Ensure `<lang>.traineddata` exists in `dir`. If missing, downloads it from
+/// the upstream `tessdata_best` repo — mirroring tesseract.js's first-use
+/// download behavior. Concurrent calls are safe via an atomic rename.
+async fn ensure_traineddata(
+    dir: &Path,
+    language: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let filename = format!("{}.traineddata", language);
+    let final_path: PathBuf = dir.join(&filename);
+    if final_path.exists() {
+        return Ok(());
+    }
+
+    tokio::fs::create_dir_all(dir).await?;
+
+    let url = format!("{}/{}", TESSDATA_BASE_URL, filename);
+    let response = reqwest::get(&url).await?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "failed to download tessdata for language \"{}\" from {}: HTTP {}",
+            language,
+            url,
+            response.status()
+        )
+        .into());
+    }
+    let bytes = response.bytes().await?;
+
+    // Write to a temp file in the same directory, then atomically rename.
+    // This makes concurrent first-use safe: whichever rename lands last wins,
+    // and partial files never appear at the final path.
+    let tmp_path = dir.join(format!(
+        "{}.traineddata.tmp.{}",
+        language,
+        std::process::id()
+    ));
+    tokio::fs::write(&tmp_path, &bytes).await?;
+    if let Err(e) = tokio::fs::rename(&tmp_path, &final_path).await {
+        // If another task beat us to it, the file exists — that's fine.
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        if !final_path.exists() {
+            return Err(e.into());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -170,5 +226,28 @@ mod tests {
     fn test_default_tessdata_dir_non_empty() {
         let d = default_tessdata_dir();
         assert!(!d.is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_default_tessdata_dir_windows_uses_appdata() {
+        // Sanity check the Windows path uses backslashes and includes tesseract-rs/tessdata.
+        let d = default_tessdata_dir();
+        assert!(
+            d.ends_with("\\tesseract-rs\\tessdata"),
+            "unexpected default path on windows: {}",
+            d
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_traineddata_skips_when_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("xyz.traineddata");
+        std::fs::write(&path, b"stub").unwrap();
+        // Should be a no-op (no network); language "xyz" doesn't exist upstream
+        // so any actual download attempt would fail.
+        ensure_traineddata(tmp.path(), "xyz").await.unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"stub");
     }
 }

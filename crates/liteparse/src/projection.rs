@@ -93,7 +93,10 @@ fn canonical_rotation(rotation: f32) -> i32 {
     let mut best = 0.0f32;
     let mut best_delta = f32::INFINITY;
     for c in candidates {
-        let delta = (r - c).abs();
+        // Circular angular distance, so rotations just under 360° are treated
+        // as near 0° (e.g. 359° is 1° from upright, not 89° from 270°).
+        let raw = (r - c).abs();
+        let delta = raw.min(360.0 - raw);
         if delta < best_delta {
             best_delta = delta;
             best = c;
@@ -2641,6 +2644,11 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
                 .text_items
                 .iter()
                 .map(|item| ProjectedTextItem {
+                    orig_x: item.x,
+                    orig_y: item.y,
+                    orig_width: item.width,
+                    orig_height: item.height,
+                    orig_rotation: item.rotation,
                     item: item.clone(),
                     snap: Snap::Left,
                     anchor: Anchor::Left,
@@ -2673,8 +2681,7 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
                 page.page_width,
                 page.page_height,
             );
-            let mut obstacles: Vec<Rect> =
-                Vec::with_capacity(figures.len() + table_rects.len());
+            let mut obstacles: Vec<Rect> = Vec::with_capacity(figures.len() + table_rects.len());
             obstacles.extend(figures.iter().cloned());
             obstacles.extend(table_rects.iter().cloned());
             let (projected_lines, regions) = build_projected_lines(
@@ -2688,7 +2695,17 @@ pub fn project_pages_to_grid(pages: Vec<Page>) -> Vec<ParsedPage> {
                 page_width: page.page_width,
                 page_height: page.page_height,
                 text,
-                text_items: projected_items.into_iter().map(|proj| proj.item).collect(),
+                text_items: projected_items
+                    .into_iter()
+                    .map(|proj| TextItem {
+                        x: proj.orig_x,
+                        y: proj.orig_y,
+                        width: proj.orig_width,
+                        height: proj.orig_height,
+                        rotation: proj.orig_rotation,
+                        ..proj.item
+                    })
+                    .collect(),
                 projected_lines,
                 regions,
                 graphics: page.graphics,
@@ -3558,11 +3575,10 @@ fn xy_cut_rec(
             };
             thin_wide.is_some_and(|((thin, thin_lines), (wide, wide_bbox))| {
                 thin_lines <= 1
-                    && column_cut_x(items, wide, wide_bbox, median_h, figures)
-                        .is_some_and(|gx| {
-                            let (tx0, tx1) = x_extent(items, thin);
-                            tx0 < gx - 1.0 && tx1 > gx + 1.0
-                        })
+                    && column_cut_x(items, wide, wide_bbox, median_h, figures).is_some_and(|gx| {
+                        let (tx0, tx1) = x_extent(items, thin);
+                        tx0 < gx - 1.0 && tx1 > gx + 1.0
+                    })
             })
         };
         if (lc < XY_MIN_LINES_PER_H_SIDE || rc < XY_MIN_LINES_PER_H_SIDE) && !spanning_rescue {
@@ -3574,7 +3590,6 @@ fn xy_cut_rec(
             };
         }
     }
-
 
     let left_region = xy_cut_rec(items, left, left_bbox, depth + 1, median_h, figures);
     let right_region = xy_cut_rec(items, right, right_bbox, depth + 1, median_h, figures);
@@ -3926,6 +3941,11 @@ mod tests {
             is_margin_line_number: false,
             rotated: false,
             d: 0.0,
+            orig_x: 10.0,
+            orig_y: y,
+            orig_width: width,
+            orig_height: height,
+            orig_rotation: 0.0,
         }
     }
 
@@ -4158,8 +4178,7 @@ mod tests {
     fn has_vertical_split(region: &Region) -> bool {
         match &region.kind {
             RegionKind::Split { axis, children } => {
-                *axis == CutAxis::Vertical
-                    || children.iter().any(has_vertical_split)
+                *axis == CutAxis::Vertical || children.iter().any(has_vertical_split)
             }
             RegionKind::Leaf { .. } => false,
         }
@@ -4170,7 +4189,13 @@ mod tests {
         for row in 0..8 {
             let y = y0 + row as f32 * 14.0;
             items.push(item_at("left column body text here", 50.0, y, 230.0, 12.0));
-            items.push(item_at("right column body text here", 320.0, y, 230.0, 12.0));
+            items.push(item_at(
+                "right column body text here",
+                320.0,
+                y,
+                230.0,
+                12.0,
+            ));
         }
     }
 
@@ -4181,7 +4206,13 @@ mod tests {
         // the gutter so the body can't V-cut until it's peeled. The rescue in
         // the min-lines guard must allow the (finite-score) H-cut that isolates
         // the spanning line, after which the body splits into columns.
-        let mut items = vec![item_at("Centered Spanning Author Line", 160.0, 100.0, 290.0, 12.0)];
+        let mut items = vec![item_at(
+            "Centered Spanning Author Line",
+            160.0,
+            100.0,
+            290.0,
+            12.0,
+        )];
         two_column_body(&mut items, 140.0);
         let region = xy_cut(&items, 612.0, 792.0, &[]);
         assert!(
@@ -4199,7 +4230,13 @@ mod tests {
         let mut items = vec![item_at("Short caption", 60.0, 100.0, 140.0, 12.0)];
         for row in 0..8 {
             let y = 140.0 + row as f32 * 14.0;
-            items.push(item_at("single column running body text", 50.0, y, 230.0, 12.0));
+            items.push(item_at(
+                "single column running body text",
+                50.0,
+                y,
+                230.0,
+                12.0,
+            ));
         }
         let region = xy_cut(&items, 612.0, 792.0, &[]);
         assert!(
@@ -4225,5 +4262,39 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert!(parsed[0].text.is_empty());
         assert!(parsed[0].text_items.is_empty());
+    }
+
+    #[test]
+    fn canonical_rotation_snaps_cardinals_and_near_cardinals() {
+        // Exact cardinals are unchanged.
+        assert_eq!(canonical_rotation(0.0), 0);
+        assert_eq!(canonical_rotation(90.0), 90);
+        assert_eq!(canonical_rotation(180.0), 180);
+        assert_eq!(canonical_rotation(270.0), 270);
+
+        // Small offsets within the 2° tolerance snap to the nearest cardinal.
+        assert_eq!(canonical_rotation(1.0), 0);
+        assert_eq!(canonical_rotation(88.5), 90);
+        assert_eq!(canonical_rotation(271.0), 270);
+    }
+
+    #[test]
+    fn canonical_rotation_snaps_near_360_to_zero() {
+        // Rotations just under 360° are ~upright and must snap to 0, not be
+        // treated as ~270° (regression: linear distance picked 270 for 359°).
+        assert_eq!(canonical_rotation(358.0), 0);
+        assert_eq!(canonical_rotation(359.0), 0);
+        assert_eq!(canonical_rotation(359.5), 0);
+        // rem_euclid normalizes out-of-range / negative inputs first.
+        assert_eq!(canonical_rotation(360.0), 0);
+        assert_eq!(canonical_rotation(-1.0), 0);
+    }
+
+    #[test]
+    fn canonical_rotation_passes_through_non_cardinal_angles() {
+        // Beyond the 2° snap tolerance the rounded raw angle is returned,
+        // including angles near (but not within tolerance of) 360°.
+        assert_eq!(canonical_rotation(45.0), 45);
+        assert_eq!(canonical_rotation(357.0), 357);
     }
 }
