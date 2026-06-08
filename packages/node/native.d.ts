@@ -26,6 +26,8 @@ export interface JsLiteParseConfig {
   password?: string
   /** Suppress progress output. */
   quiet?: boolean
+  /** Number of concurrent OCR workers (default: CPU cores - 1). */
+  numWorkers?: number
 }
 export interface JsTextItem {
   text: string
@@ -54,6 +56,8 @@ export interface JsScreenshotResult {
   height: number
   imageBuffer: Buffer
 }
+/** Search text items for phrase matches, returning merged items with combined bounding boxes. */
+export declare function searchItems(items: Array<JsTextItem>, phrase: string, caseSensitive?: boolean | undefined | null): Array<JsTextItem>
 /** Main LiteParse parser class. */
 export declare class LiteParse {
   /**
@@ -63,7 +67,12 @@ export declare class LiteParse {
   constructor(config?: JsLiteParseConfig | undefined | null)
   /** Parse a document. Accepts a file path (string) or raw PDF bytes (Buffer). */
   parse(input: string | Buffer): Promise<JsParseResult>
-  /** Take screenshots of document pages. Returns PNG image buffers. */
+  /**
+   * Take screenshots of document pages. Returns PNG image buffers.
+   *
+   * Non-PDF files are automatically converted to PDF before rendering when
+   * LibreOffice/ImageMagick are available.
+   */
   screenshot(input: string | Buffer, pageNumbers?: Array<number> | undefined | null): Promise<Array<JsScreenshotResult>>
   /** Get the current configuration. */
   get config(): JsLiteParseConfig
