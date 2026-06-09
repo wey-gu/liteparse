@@ -78,7 +78,50 @@ pub fn classify_page_with_filters(
     // own title ("Contents", "Table of Contents") is shorter without a
     // trailing number — it falls through the size/bold heuristics with no
     // special handling needed.
-    let toc_page = page_is_toc(page);
+    // Fallback TOC detection: when projection truncates the trailing page
+    // numbers on TOC entries (common when entries use dot-leaders that the
+    // projection eats), `page_is_toc` misses. If a `Contents` / `Table of
+    // Contents` title is the first text on the page, treat the rest as TOC
+    // entries even without page-number tails. Guard: don't fire if the page
+    // has a substantial body paragraph (≥3 lines of ≥80 chars each) — that's
+    // a real content page that just happens to mention "contents" near the
+    // top.
+    let toc_page = page_is_toc(page) || {
+        let mut saw_title = false;
+        let mut long_lines = 0usize;
+        for line in &page.projected_lines {
+            if is_rotated_line(line) {
+                continue;
+            }
+            let t = line.text.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if !saw_title {
+                if is_toc_title(t) {
+                    saw_title = true;
+                    continue;
+                }
+                if t.chars().count() > 40 {
+                    break;
+                }
+            } else if t.chars().count() >= 80 {
+                // Dot-leader fragments ("`. . . . . . . .`") are part of
+                // TOC layout, not body paragraphs — skip them.
+                let alpha = t.chars().filter(|c| c.is_alphabetic()).count();
+                let alpha_ratio = alpha as f32 / t.chars().count() as f32;
+                if alpha_ratio < 0.3 {
+                    continue;
+                }
+                long_lines += 1;
+                if long_lines >= 3 {
+                    saw_title = false;
+                    break;
+                }
+            }
+        }
+        saw_title
+    };
 
     // Strip running header/footer lines up-front so they don't leak into
     // table detection (a repeating two-column footer would otherwise look
@@ -246,6 +289,11 @@ fn classify_region(
     let mut last_list_item_idx: Option<usize> = None;
     let mut last_list_line: Option<usize> = None;
     let mut heading_run: Option<(u8, usize)> = None;
+    // Track whether we've already emitted a TOC title on this page. Once seen,
+    // any subsequent line matching `is_toc_title` (e.g. "Index", "List of
+    // Figures") is a TOC entry pointing at that chapter, not another title,
+    // and must stay suppressed.
+    let mut toc_title_emitted = false;
 
     let flush_paragraph = |blocks: &mut Vec<Block>, p: Option<ParaAccum>| {
         if let Some(acc) = p
@@ -408,13 +456,23 @@ fn classify_region(
 
         // Priority chain: tagged-PDF struct tree → outline → font-size map.
         let tagged_level = struct_heading_level(line, &page.struct_nodes);
-        let outline_level =
-            tagged_level.or_else(|| outline_heading_level(line, page.page_height, outline, text));
         // Caption lines ("Figure 7", "Table 3.") are routinely set in a
         // distinct (and slightly larger) font that lands them in the
         // font-size heading map. Suppress font-size promotion for them;
         // outline / struct-tree signals still win since those are explicit.
-        let toc_suppress = toc_page && !is_toc_title(text);
+        let is_first_toc_title = is_toc_title(text) && !toc_title_emitted;
+        let toc_suppress = toc_page && !is_first_toc_title;
+        // Outline entries on a TOC page are the TOC itself — every entry
+        // prefix-matches an outline target ("Introduction", "Part I", ...).
+        // Promoting them to `##` shreds the GT MHS structure (which has just
+        // `# Contents`). Tagged-PDF struct levels are explicit and still win.
+        let outline_level = tagged_level.or_else(|| {
+            if toc_suppress {
+                None
+            } else {
+                outline_heading_level(line, page.page_height, outline, text)
+            }
+        });
         let size_level = if is_caption_line(text) || toc_suppress {
             None
         } else {
@@ -443,17 +501,79 @@ fn classify_region(
         // can run 100+ chars — but a 200-char citation is unambiguously
         // not a heading.
         let size_level = size_level.filter(|_| text.chars().count() <= HEADING_MAX_TEXT_CHARS);
+        // Attribution lines under figures/charts are never section headings,
+        // even when the chart caption font is slightly above body size.
+        let size_level =
+            size_level.filter(|_| !crate::markdown_layout::headings::is_attribution_line(text));
+        // Run-in label guard: a size-promoted line that contains a mid-line
+        // ". " followed by ≥3 more words AND ends with a mid-word "-" wrap
+        // is almost always a paragraph leading with a bold run-in label
+        // ("Base model. Any n-layer transformer architec-"), not a section
+        // heading. Both signals must fire — a heading occasionally has either
+        // on its own (e.g. abbreviation periods, intentional hyphen).
+        let size_level = size_level.filter(|_| {
+            let has_mid_sentence = text.contains(". ");
+            let mid_word_wrap = text.trim_end().ends_with('-');
+            !(has_mid_sentence && mid_word_wrap)
+        });
         // A standalone "Contents" / "Table of Contents" / "Index" line is
         // almost always a real H1, even when `page_is_toc` is false — many
         // TOCs list entries without inline trailing page numbers, so the
         // page-level detector misses them. `is_toc_title` matches the *entire*
         // trimmed line against an exact whitelist, so it can't fire mid-prose.
-        let toc_title_level = if is_toc_title(text) { Some(1u8) } else { None };
+        let toc_title_level = if is_first_toc_title { Some(1u8) } else { None };
+        if is_first_toc_title {
+            toc_title_emitted = true;
+        }
         let level = outline_level
             .or(size_level)
             .or(toc_title_level)
             .map(|l| l.clamp(1, MAX_HEADING_LEVELS as u8));
         let mut demoted_heading = false;
+        // Unconditional wrap-continuation merge: when the previous block is a
+        // live heading_run and this line continues it (same font, same region,
+        // tight gap), merge regardless of whether this line itself qualifies
+        // as a heading. Catches body-size wrap continuations of bold headings
+        // ("Cellular Cycle\nand Replication") where line 2 has the same
+        // sub-body size and would otherwise emit as a stray bold paragraph.
+        // Gate the unconditional merge: only fold body-sized continuations that
+        // *look* like the rest of a heading, not body prose. `continues_heading`
+        // only enforces structural agreement (font/bold/region/gap), so a body
+        // paragraph that happens to share those traits (e.g. a heading followed
+        // by an all-bold body paragraph) would otherwise be absorbed.
+        // Reject the candidate if it starts a list item (`l.`, `1.`, `· `…) or
+        // contains a mid-sentence period — both are unambiguous prose signals
+        // and never appear inside a real wrapped heading.
+        let cont_looks_like_heading = parse_list_marker(text).is_none() && !text.contains(". ");
+        if level.is_none()
+            && cont_looks_like_heading
+            && let Some((run_level, run_idx)) = heading_run.as_ref()
+            && continues_heading(&lines[*run_idx], line)
+            && let Some(Block::Heading {
+                level: last_level,
+                text: htext,
+            }) = blocks.last_mut()
+            && *last_level == *run_level
+        {
+            let combined_chars = htext.chars().count() + 1 + text.chars().count();
+            if combined_chars <= HEADING_MAX_TEXT_CHARS {
+                let run_level = *run_level;
+                if debug {
+                    eprintln!(
+                        "[MD heading-wrap-uncond] merge h{} '{}' <- '{}' (prev_idx={} cur_idx={} combined={})",
+                        run_level,
+                        htext.chars().take(40).collect::<String>(),
+                        text.chars().take(60).collect::<String>(),
+                        run_idx,
+                        line_idx,
+                        combined_chars
+                    );
+                }
+                append_inline_continuation(htext, text, &collapse_whitespace(text));
+                heading_run = Some((run_level, line_idx));
+                continue;
+            }
+        }
         if let Some(level) = level {
             // Merge a wrapped continuation into the heading directly above when
             // it flows as one block: same level, the heading is still the last
@@ -501,6 +621,15 @@ fn classify_region(
                 list_base_indent = None;
                 last_list_item_idx = None;
                 last_list_line = None;
+                if debug {
+                    eprintln!(
+                        "[MD heading-emit size/outline] h{} idx={} '{}' size={:.2}",
+                        level,
+                        line_idx,
+                        text.chars().take(80).collect::<String>(),
+                        line.dominant_font_size,
+                    );
+                }
                 blocks.push(Block::Heading {
                     level,
                     text: collapse_whitespace(text),
@@ -602,10 +731,22 @@ fn classify_region(
             // have. With an empty heading_map this lands on H1; with a full
             // 6-level map it caps at H6.
             let level = (heading_map.len() as u8 + 1).clamp(1, MAX_HEADING_LEVELS as u8);
+            if debug {
+                eprintln!(
+                    "[MD heading-emit bold] h{} idx={} '{}' size={:.2}",
+                    level,
+                    line_idx,
+                    text.chars().take(80).collect::<String>(),
+                    line.dominant_font_size,
+                );
+            }
             blocks.push(Block::Heading {
                 level,
                 text: collapse_whitespace(text),
             });
+            // Arm the heading_run so a wrapped continuation on the next line
+            // merges into this heading instead of emitting as a second one.
+            heading_run = Some((level, line_idx));
             continue;
         }
 

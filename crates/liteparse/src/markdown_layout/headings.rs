@@ -38,6 +38,88 @@ pub(super) const BOLD_HEADING_MAX_CHARS: usize = 80;
 /// multi-clause sentences that exceed any reasonable label length.
 pub(super) const HEADING_MAX_TEXT_CHARS: usize = 140;
 
+/// Recognize a section-number prefix like "1", "1.5", "A.2", "Sec. 2",
+/// "Ch. 3", "§4". Used to exempt numbered subsection headings from the
+/// bold-heading run-in guard (which would otherwise reject "1.5. Migrant
+/// Workers..." because of the embedded ". " after the section number).
+pub(super) fn is_section_number_prefix(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    // Strip optional "Sec", "Ch", "Chapter", "§" lead-in.
+    let stripped = t
+        .strip_prefix('§')
+        .or_else(|| {
+            for lead in [
+                "Sec.", "Sec", "Ch.", "Ch", "Chapter", "Chap.", "Chap", "Part",
+            ] {
+                if let Some(rest) = t.strip_prefix(lead) {
+                    return Some(rest.trim_start());
+                }
+            }
+            None
+        })
+        .unwrap_or(t);
+    // Remaining must be a dotted numeric / alphanumeric section identifier.
+    // Examples accepted: "1", "1.5", "1.5.2", "A.2", "IV".
+    if stripped.is_empty() {
+        // "§" alone counts as a section marker context.
+        return true;
+    }
+    let mut saw_digit = false;
+    let mut prev_dot = true;
+    for c in stripped.chars() {
+        if c.is_ascii_digit() {
+            saw_digit = true;
+            prev_dot = false;
+        } else if c.is_ascii_uppercase() && !prev_dot {
+            // Allow a leading letter ("A.2") but not letters mid-segment.
+            return false;
+        } else if c.is_ascii_uppercase() {
+            prev_dot = false;
+        } else if c == '.' {
+            if prev_dot {
+                return false;
+            }
+            prev_dot = true;
+        } else {
+            return false;
+        }
+    }
+    saw_digit
+}
+
+/// Recognize an attribution / annotation prefix like "Source:",
+/// "Note:", "Adapted from", "Reproduced from", "Image:" — these
+/// commonly appear as isolated bold-styled lines beneath charts and
+/// figures, but they are never section headings.
+pub(super) fn is_attribution_line(text: &str) -> bool {
+    let t = text.trim_start();
+    const PREFIXES: &[&str] = &[
+        "Source:",
+        "Sources:",
+        "Note:",
+        "Notes:",
+        "Adapted from",
+        "Reproduced from",
+        "Reprinted from",
+        "Image:",
+        "Image source:",
+        "Photo:",
+        "Photo credit:",
+        "Credit:",
+        "Caption:",
+    ];
+    for p in PREFIXES {
+        if t.len() >= p.len() && t.is_char_boundary(p.len()) && t[..p.len()].eq_ignore_ascii_case(p)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Recognize caption-prefix lines like "Figure 7", "Fig. 12.", "Table 3:",
 /// "Tab. 5", "Equation (4)" — these routinely render in a slightly distinct
 /// font/size that lands them in the heading_map and gets them promoted to a
@@ -273,6 +355,11 @@ pub(super) fn looks_like_bold_heading(
     if is_caption_line(text) {
         return false;
     }
+    // Attribution lines ("Source: …", "Note: …", "Adapted from …") commonly
+    // appear as isolated bold lines beneath charts/figures. Never headings.
+    if is_attribution_line(text) {
+        return false;
+    }
     // Accept a line whose spans are all bold (italic may vary) and non-mono.
     // A strict single-style check would reject headings that mix bold and
     // bold-italic spans (e.g. "**4** ***Foo*** **Bar**"), which are common
@@ -287,6 +374,43 @@ pub(super) fn looks_like_bold_heading(
     // ':' is deliberately allowed ("Reference frameworks:").
     if text.ends_with('.') {
         return false;
+    }
+    // Run-in label: a bold line whose first sentence ends in ". " followed
+    // by body prose (multi-word continuation that doesn't look like a
+    // sub-numbered heading) is a paragraph lead, not a section heading.
+    // Tight constraints to avoid rejecting numbered subsection headings like
+    // "1.5. Migrant Workers" or "Sec. 2. Method":
+    //   - ≥3 space-separated words after the break
+    //   - line ends with mid-word "-" (wrap continuation) OR is >50 chars
+    //   - first char after the break is uppercase ASCII letter
+    if let Some(pos) = text.find(". ") {
+        let before = &text[..pos];
+        // Section-number prefix exemption: when the segment before ". " is a
+        // numbered section identifier (e.g. "1", "1.5", "A.2", "Sec. 2",
+        // "Ch. 3", "§4"), this is a numbered subsection heading like
+        // "1.5. Migrant Workers..." — the period is part of the section
+        // number, not a sentence terminator. Skip the run-in rejection.
+        let is_section_number = is_section_number_prefix(before);
+        let after = text[pos + 2..].trim();
+        let starts_upper = after.chars().next().is_some_and(|c| c.is_ascii_uppercase());
+        let word_count = after.split_whitespace().count();
+        let ends_hyphen = text.trim_end().ends_with('-');
+        if !is_section_number
+            && starts_upper
+            && ((word_count >= 2 && ends_hyphen) || (word_count >= 3 && text.chars().count() > 50))
+        {
+            if std::env::var("LITEPARSE_DEBUG_MD").is_ok() {
+                eprintln!(
+                    "[MD bold-heading REJECT run-in] '{}' (pos={} word_count={} ends_hyphen={} len={})",
+                    text.chars().take(80).collect::<String>(),
+                    pos,
+                    word_count,
+                    ends_hyphen,
+                    text.chars().count()
+                );
+            }
+            return false;
+        }
     }
     // Block headings are capitalized. A bold line starting lowercase is almost
     // always a stray bold word or a borderless table cell, not a heading.
@@ -332,7 +456,13 @@ pub(super) fn looks_like_bold_heading(
     }
     match next {
         None => true,
-        Some(n) => !continues_paragraph(line, n),
+        // A wrapped multi-line bold heading ("Cellular Cycle\nand Replication")
+        // would otherwise be rejected here because line 1's next line continues
+        // the paragraph. Accept the case where `next` is itself an all-bold
+        // line — the `heading_run` merge in classify.rs will absorb the
+        // continuation. Without this, wrapped bold-only headings silently emit
+        // as bold paragraphs and don't reach the heading hierarchy at all.
+        Some(n) => !continues_paragraph(line, n) || line_all_bold(n),
     }
 }
 
@@ -662,6 +792,15 @@ pub(super) fn outline_heading_level(
         // Multiple sentences → almost certainly prose, not a heading line.
         let sentence_breaks = normalized_line.matches(". ").count();
         if line_len > max_line_len || sentence_breaks >= 2 {
+            continue;
+        }
+        // Run-in label guard: a single ". " sentence break is OK on a heading
+        // only when the line is roughly title-shaped. When the line carries
+        // substantial body text past the title (e.g. "Base model. Any n-layer
+        // transformer architec-"), it's a paragraph leading with a bold
+        // run-in label, not a section heading. Title is the *prefix* of the
+        // matched line, so excess body length = line_len - title_len.
+        if sentence_breaks >= 1 && line_len > title_len + 15 {
             continue;
         }
         if normalized_line.starts_with(&normalized_title)

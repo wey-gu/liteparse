@@ -570,7 +570,30 @@ fn form_lines(
             // Cap the line height to a reasonable multiple of median text height.
             let proposed_min_y = current_line_min_y.min(item.item.y);
             let proposed_max_y = current_line_max_y.max(item.item.y + item.item.height);
-            let too_tall = (proposed_max_y - proposed_min_y) > median_height * 1.8;
+            // too_tall threshold: prefer the smallest *trusted* item height
+            // already in the current line as the line-height baseline. PDFium
+            // reports inflated em-box heights for items with matrix-baked
+            // sizing (fs=1.0); using the global `median_height` then permits
+            // a real heading row to absorb the next visual row below it.
+            // Falls back to median_height when no smaller anchor is available.
+            let line_anchor_h = current_line
+                .iter()
+                .filter_map(|i| {
+                    if matches!(i.item.font_size, Some(fs) if fs > 1.5)
+                        || i.item.height < median_height
+                    {
+                        Some(i.item.height)
+                    } else {
+                        None
+                    }
+                })
+                .fold(f32::INFINITY, f32::min);
+            let too_tall_threshold = if line_anchor_h.is_finite() {
+                (line_anchor_h * 1.8).max(median_height * 0.6)
+            } else {
+                median_height * 1.8
+            };
+            let too_tall = (proposed_max_y - proposed_min_y) > too_tall_threshold;
 
             if !line_collide
                 && !margin_mismatch
@@ -3386,7 +3409,18 @@ fn xy_find_column_cut(
     // numbered marker, etc.) carry only a few lines.
     let strong_before = peaks.len();
     let raw_counts: Vec<(f32, usize)> = peaks.clone();
-    peaks.retain(|(_, c)| *c >= XY_COLUMN_MIN_LINES_PER_PEAK);
+    // Adaptive minimum: scale with how many line-starts the band actually has.
+    // The static `XY_COLUMN_MIN_LINES_PER_PEAK = 10` floor is meant to drop
+    // indented-paragraph false peaks (a handful of lines) on a large region,
+    // but on smaller regions it can drop legitimate column peaks too. For a
+    // body region with ~36 lines split across 2 columns, each peak only
+    // carries 5–6 line-starts after the histogram spreads them across the
+    // page width — well under 10. Use `max(line_starts / 6, 4)`: still rules
+    // out the tiny indent peaks, but a 2-column region with ~5 lines/peak now
+    // qualifies. Capped by the original `XY_COLUMN_MIN_LINES_PER_PEAK` to
+    // preserve behavior on large regions.
+    let adaptive_min = (line_starts.len() / 6).clamp(4, XY_COLUMN_MIN_LINES_PER_PEAK);
+    peaks.retain(|(_, c)| *c >= adaptive_min);
     if peaks.len() < 2 {
         if dbg {
             let preview: Vec<String> = raw_counts
@@ -3395,8 +3429,7 @@ fn xy_find_column_cut(
                 .map(|(x, c)| format!("({x:.0}:{c})"))
                 .collect();
             eprintln!(
-                "[xy col-reject] peaks<2 after min_per_peak={} (raw={strong_before} strong={}): {}",
-                XY_COLUMN_MIN_LINES_PER_PEAK,
+                "[xy col-reject] peaks<2 after min_per_peak={adaptive_min} (raw={strong_before} strong={}): {}",
                 peaks.len(),
                 preview.join(",")
             );
@@ -4218,14 +4251,32 @@ pub(crate) fn build_projected_lines(
         const Y_BAND_HEIGHT_CAP: f32 = 24.0;
         for idx in sorted {
             let y = items[idx].item.y;
-            let h = items[idx].item.height.clamp(1.0, Y_BAND_HEIGHT_CAP);
+            let raw_h = items[idx].item.height;
+            let h = raw_h.clamp(1.0, Y_BAND_HEIGHT_CAP);
             if current.is_empty() {
                 current.push(idx);
                 current_y = y;
                 current_h = h;
                 continue;
             }
-            let same = (y - current_y).abs() < current_h.max(h) * 0.5;
+            // Use the SMALLER of the two heights for the y-band tolerance —
+            // matching baselines (same row) differ by ≪ either glyph height,
+            // while the next-row-down baseline differs by ≈ the smaller
+            // glyph's full height. Using `.max()` here is fooled by
+            // matrix-inflated em-boxes: a 16pt heading row "swallows" a
+            // 50pt-em-box body item on the row below because the tolerance
+            // becomes 25pt. Reproducer: doc 122 ("III. Electrophorese" at
+            // y=286.2 vs "Reagents:" at y=295.9, diff=9.7pt).
+            // When the incoming item's raw bbox is wildly taller than the
+            // current line's anchor (>2× and >Y_BAND_HEIGHT_CAP), this is
+            // an em-box-inflated body item trying to crash into a heading
+            // row. Halve the tolerance further so a small y-offset (4–7pt)
+            // doesn't fuse them. Reproducer: doc 122 "Load the Gel"
+            // (h=14.9, y=435.6) vs next-row "Use" (h=55.6, y=442.0,
+            // diff=6.4pt vs 14.9*0.5=7.45 tolerance — too permissive).
+            let height_mismatch = raw_h > Y_BAND_HEIGHT_CAP && raw_h > current_h * 2.0;
+            let tol_factor = if height_mismatch { 0.3 } else { 0.5 };
+            let same = (y - current_y).abs() < current_h.min(h) * tol_factor;
             if same {
                 current.push(idx);
                 current_y = current_y.min(y);

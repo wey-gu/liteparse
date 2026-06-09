@@ -2219,22 +2219,6 @@ fn build_ruled_table(
         .count();
     let empty_frac = (empty_count as f32) / (total as f32);
     if empty_frac > TABLE_MAX_EMPTY_CELL_FRACTION {
-        // Fill-in-blank forms (docs 119/120/180) have a column of row labels
-        // OR a row of column headers but most body cells empty by design.
-        // Two filters together distinguish real forms from layout wrappers
-        // that happen to have a dense column (doc 130's right-side prose
-        // column trips a naive max-fill check):
-        //   1. The dense band must be col 0 or row 0 — that's where labels
-        //      and headers actually live; a dense column anywhere else is
-        //      almost always body prose, not a structural label spine.
-        //   2. Spine cells must be short (≤ TABLE_SPINE_MAX_CELL_CHARS) —
-        //      labels are 1-5 words, not multi-sentence prose.
-        // Restrict to the col-0 case only. row-0 spines turn out to be too
-        // permissive — doc 051 has a multi-line header that lands across all
-        // columns (row0_fill = 1.0) but its body is badly fragmented, so the
-        // row-0 signal misleads. Col-0 label columns are the much stronger
-        // fill-in-form signature: rare in body prose, near-universal in
-        // forms.
         let col0_fill = (0..n_rows).filter(|r| cell_has_text[*r][0]).count() as f32 / n_rows as f32;
         let col0_max_chars = (0..n_rows)
             .filter(|r| cell_has_text[*r][0])
@@ -2243,7 +2227,49 @@ fn build_ruled_table(
             .unwrap_or(0);
         let col0_spine =
             col0_fill >= TABLE_SPINE_FILL_FRACTION && col0_max_chars <= TABLE_SPINE_MAX_CELL_CHARS;
-        if !col0_spine || empty_frac > TABLE_MAX_EMPTY_CELL_FRACTION_WITH_SPINE {
+        // Long-prose table bypass: a large grid (≥5×3) with a structurally
+        // bold row 0 header AND a dense description column (any col with
+        // ≥70% fill rate) is almost certainly a multi-line legal/reference
+        // table where the description column wraps over many empty
+        // continuation rows. Density arbitration in `merge_table_runs`
+        // prevents a decorative grid that happens to match these criteria
+        // from beating a real overlapping borderless table.
+        // Reproducer: docs 088/089/090 multi-page legal report.
+        // Header may span multiple visual rows (the grid detector slices on
+        // each text baseline). Treat the first ≤4 rows as the header band
+        // and require their *union* to cover most columns AND be all-bold.
+        let header_band = n_rows.min(4);
+        let mut header_cols_covered = vec![false; n_cols];
+        let mut header_all_bold = true;
+        for r in 0..header_band {
+            for c in 0..n_cols {
+                if cell_has_text[r][c] {
+                    header_cols_covered[c] = true;
+                    if !cell_is_bold[r][c] {
+                        header_all_bold = false;
+                    }
+                }
+            }
+        }
+        let header_coverage = header_cols_covered.iter().filter(|t| **t).count();
+        let dense_inner_col = (1..n_cols).any(|c| {
+            let col_fill =
+                (0..n_rows).filter(|r| cell_has_text[*r][c]).count() as f32 / n_rows as f32;
+            col_fill >= TABLE_SPINE_FILL_FRACTION
+        });
+        // Header coverage doesn't need to span every column — wide-cell
+        // legal tables often spread the header across many visual baselines
+        // and only a few columns land in the top-4-rows band. Require ≥3
+        // columns covered as evidence of a real header, not just a title.
+        let long_prose_table = n_rows >= 5
+            && n_cols >= 3
+            && header_coverage >= 3
+            && header_all_bold
+            && dense_inner_col;
+        if !col0_spine && !long_prose_table {
+            return None;
+        }
+        if empty_frac > TABLE_MAX_EMPTY_CELL_FRACTION_WITH_SPINE && !long_prose_table {
             return None;
         }
     }
@@ -2392,19 +2418,39 @@ pub(super) fn detect_ruled_tables(
     out
 }
 
+/// Count filled (non-empty) cells in a TableRun. GridFallback returns 0 so
+/// it never beats a real Table in density comparisons.
+fn run_filled_cells(run: &TableRun) -> usize {
+    match &run.block {
+        Block::Table { header, rows } => {
+            let header_filled = header
+                .as_ref()
+                .map(|h| h.iter().filter(|c| !c.trim().is_empty()).count())
+                .unwrap_or(0);
+            let body_filled: usize = rows
+                .iter()
+                .flat_map(|r| r.iter())
+                .filter(|c| !c.trim().is_empty())
+                .count();
+            header_filled + body_filled
+        }
+        _ => 0,
+    }
+}
+
 /// Merge ruled-grid runs with borderless runs into a single sorted list. When
-/// ranges overlap the ruled run wins (path-based geometry is strictly stronger
-/// than text-alignment heuristics) — overlapping borderless runs are dropped.
+/// ranges overlap the ruled run normally wins (path-based geometry is a
+/// stronger signal than text-alignment heuristics), with two exceptions:
+///   1. A single-column ruled run yields to a multi-column borderless run
+///      covering the same range (vertical separators may be implicit; doc 078).
+///   2. A sparse ruled run yields to a denser borderless run — decorative
+///      vector boxes around titles / callout banners produce ruled "tables"
+///      with few filled cells; when a borderless detector finds a much denser
+///      real table in the same region, prefer it (doc 051).
 pub(super) fn merge_table_runs(
     mut ruled: Vec<TableRun>,
     borderless: Vec<TableRun>,
 ) -> Vec<TableRun> {
-    // A ruled run normally beats an overlapping borderless run (path geometry
-    // is a stronger signal than text alignment). But a 1-column ruled run is
-    // ambiguous — it can come from a real single-column table (doc 149's
-    // stacked cards) OR from a multi-column table whose vertical separators
-    // are implicit and only the top/bottom rules were drawn (doc 078). Yield
-    // to a multi-column borderless run that covers the same range.
     let mut kept: Vec<TableRun> = Vec::with_capacity(ruled.len());
     for r in ruled.drain(..) {
         let is_one_col = matches!(&r.block, Block::Table { rows, .. } if rows.first().map(|row| row.len()).unwrap_or(0) <= 1);
@@ -2419,6 +2465,21 @@ pub(super) fn merge_table_runs(
             if beaten {
                 continue;
             }
+        }
+        // Density check: if a borderless run overlaps and carries
+        // substantially more filled cells, the ruled run is most likely
+        // a decorative grid (page chrome, title banner) wrapping the real
+        // table the borderless detector already found.
+        let ruled_density = run_filled_cells(&r);
+        let beaten_by_density = borderless.iter().any(|b| {
+            let overlaps = !(b.end <= r.start || b.start >= r.end);
+            if !overlaps {
+                return false;
+            }
+            run_filled_cells(b) >= ruled_density * 2 + 4
+        });
+        if beaten_by_density {
+            continue;
         }
         kept.push(r);
     }
