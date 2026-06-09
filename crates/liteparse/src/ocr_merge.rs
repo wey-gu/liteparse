@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::error::LiteParseError;
 use crate::ocr::{OcrEngine, OcrOptions, OcrResult};
 use crate::types::{Page, TextItem};
-use image::{ImageBuffer, Rgba};
 use pdfium::Document;
 
 /// Owned page bitmap prepared for OCR. Indices refer to positions in the `pages` slice.
@@ -60,14 +59,9 @@ pub(crate) fn render_pages_for_ocr(
         let bitmap = page_obj.render(dpi)?;
         let width = bitmap.width() as u32;
         let height = bitmap.height() as u32;
-        let rgba = bitmap.to_rgba();
-
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, rgba)
-            .ok_or(LiteParseError::Other(
-                "failed to create image buffer".into(),
-            ))?;
-        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
-        let rgb_bytes = rgb_img.into_raw();
+        // RGB is what OCR consumes; converting straight from BGRA avoids an
+        // intermediate full-frame RGBA buffer per page.
+        let rgb_bytes = bitmap.to_rgb();
 
         rendered.push(RenderedPage {
             idx,

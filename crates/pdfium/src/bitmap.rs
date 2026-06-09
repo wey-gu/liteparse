@@ -115,6 +115,28 @@ impl<'lib> Bitmap<'lib> {
 
         rgba
     }
+
+    /// Convert the BGRA buffer to tightly-packed RGB in a new Vec, dropping the
+    /// alpha channel (pages render onto opaque white, so alpha is constant 255).
+    pub fn to_rgb(&self) -> Vec<u8> {
+        let width = self.width() as usize;
+        let height = self.height() as usize;
+        let stride = self.stride() as usize;
+        let src = self.buffer();
+        let mut rgb = Vec::with_capacity(width * height * 3);
+
+        for y in 0..height {
+            let row = &src[y * stride..y * stride + width * 4];
+            for pixel in row.chunks_exact(4) {
+                // BGRA -> RGB (drop A)
+                rgb.push(pixel[2]); // R
+                rgb.push(pixel[1]); // G
+                rgb.push(pixel[0]); // B
+            }
+        }
+
+        rgb
+    }
 }
 
 impl Drop for Bitmap<'_> {
