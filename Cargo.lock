@@ -1243,14 +1243,14 @@ dependencies = [
 
 [[package]]
 name = "liteparse-pdfium"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "liteparse-pdfium-sys",
 ]
 
 [[package]]
 name = "liteparse-pdfium-sys"
-version = "1.1.2"
+version = "1.2.0"
 dependencies = [
  "bindgen",
  "flate2",
