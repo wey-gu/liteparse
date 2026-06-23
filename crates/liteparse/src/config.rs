@@ -97,6 +97,14 @@ fn default_num_workers() -> usize {
         .unwrap_or(1)
 }
 
+/// Upper bound on the number of pages a `--target-pages` argument may expand
+/// to. Ranges are materialised eagerly into a `Vec<u32>`, so without a cap a
+/// tiny argument like `1-4294967295` would try to allocate ~17 GB and the
+/// process would be OOM-killed before the document is even opened. No real
+/// document approaches this many pages, so the cap only ever rejects nonsense
+/// input.
+const MAX_TARGET_PAGES: u64 = 100_000;
+
 #[doc(hidden)]
 pub fn parse_target_pages(s: &str) -> Result<Vec<u32>, String> {
     let mut pages = Vec::new();
@@ -115,6 +123,15 @@ pub fn parse_target_pages(s: &str) -> Result<Vec<u32>, String> {
             if start > end {
                 return Err(format!("invalid range: {}-{}", start, end));
             }
+            // Reject before expanding so an oversized range can never allocate
+            // gigabytes. `end >= start`, so the span cannot underflow.
+            let span = end as u64 - start as u64 + 1;
+            if pages.len() as u64 + span > MAX_TARGET_PAGES {
+                return Err(format!(
+                    "too many target pages: {}-{} exceeds the limit of {}",
+                    start, end, MAX_TARGET_PAGES
+                ));
+            }
             for p in start..=end {
                 pages.push(p);
             }
@@ -122,6 +139,12 @@ pub fn parse_target_pages(s: &str) -> Result<Vec<u32>, String> {
             let p: u32 = part
                 .parse()
                 .map_err(|_| format!("invalid page number: {}", part))?;
+            if pages.len() as u64 + 1 > MAX_TARGET_PAGES {
+                return Err(format!(
+                    "too many target pages: exceeds the limit of {}",
+                    MAX_TARGET_PAGES
+                ));
+            }
             pages.push(p);
         }
     }
@@ -154,6 +177,19 @@ mod tests {
     #[test]
     fn test_parse_target_pages_single_range() {
         assert_eq!(parse_target_pages("2-2").unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn test_parse_target_pages_rejects_oversized_range() {
+        // The headline OOM repro from #269: a 12-character argument must not
+        // be allowed to expand into a multi-gigabyte allocation.
+        assert!(parse_target_pages("1-4294967295").is_err());
+        assert!(parse_target_pages("0-4294967295").is_err());
+        // The cap is on the total page count, so multiple ranges that
+        // together exceed the limit are rejected too.
+        assert!(parse_target_pages("1-60000,60001-120000").is_err());
+        // A selection within the limit is still parsed normally.
+        assert_eq!(parse_target_pages("1-1000").unwrap().len(), 1000);
     }
 
     #[test]
