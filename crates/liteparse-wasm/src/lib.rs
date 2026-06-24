@@ -395,6 +395,66 @@ impl LiteParse {
         serde_wasm_bindgen::to_value(&js_result)
             .map_err(|e| JsError::new(&format!("serialize result failed: {}", e)))
     }
+
+    /// Determine per-page complexity for the given PDF bytes. Returns
+    /// `Promise<PageComplexityStats[]>` — a cheap pre-OCR check with per-page
+    /// signals and a `needsOcr` verdict.
+    #[wasm_bindgen(js_name = isComplex)]
+    pub async fn is_complex(&self, data: Vec<u8>) -> Result<JsValue, JsError> {
+        let stats = self
+            .inner
+            .is_complex(PdfInput::Bytes(data))
+            .await
+            .map_err(|e| JsError::new(&format!("is_complex failed: {}", e)))?;
+
+        let js_stats: Vec<JsPageComplexityStats> =
+            stats.iter().map(JsPageComplexityStats::from_rust).collect();
+
+        serde_wasm_bindgen::to_value(&js_stats)
+            .map_err(|e| JsError::new(&format!("serialize result failed: {}", e)))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsPageComplexityStats {
+    page_number: usize,
+    text_length: usize,
+    text_coverage: f32,
+    has_substantial_images: bool,
+    image_block_count: usize,
+    image_coverage: f32,
+    largest_image_coverage: f32,
+    full_page_image: bool,
+    uncovered_vector_area: Option<f32>,
+    is_garbled: bool,
+    page_area: f32,
+    needs_ocr: bool,
+    reasons: Vec<String>,
+}
+
+impl JsPageComplexityStats {
+    fn from_rust(stats: &liteparse::ocr_merge::PageComplexityStats) -> Self {
+        Self {
+            page_number: stats.page_number,
+            text_length: stats.text_length,
+            text_coverage: stats.text_coverage,
+            has_substantial_images: stats.has_substantial_images,
+            image_block_count: stats.image_block_count,
+            image_coverage: stats.image_coverage,
+            largest_image_coverage: stats.largest_image_coverage,
+            full_page_image: stats.full_page_image,
+            uncovered_vector_area: stats.uncovered_vector_area,
+            is_garbled: stats.is_garbled,
+            page_area: stats.page_area,
+            needs_ocr: stats.needs_ocr,
+            reasons: stats
+                .reasons
+                .iter()
+                .map(|r| r.as_str().to_string())
+                .collect(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

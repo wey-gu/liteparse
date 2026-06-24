@@ -358,6 +358,48 @@ pub struct JsScreenshotResult {
     pub image_buffer: napi::bindgen_prelude::Buffer,
 }
 
+#[napi(object)]
+#[derive(Clone)]
+pub struct JsPageComplexityStats {
+    pub page_number: u32,
+    pub text_length: u32,
+    pub text_coverage: f64,
+    pub has_substantial_images: bool,
+    pub image_block_count: u32,
+    pub image_coverage: f64,
+    pub largest_image_coverage: f64,
+    pub full_page_image: bool,
+    pub uncovered_vector_area: Option<f64>,
+    pub is_garbled: bool,
+    pub page_area: f64,
+    pub needs_ocr: bool,
+    pub reasons: Vec<String>,
+}
+
+impl JsPageComplexityStats {
+    pub fn from_rust(stats: &liteparse::ocr_merge::PageComplexityStats) -> Self {
+        Self {
+            page_number: stats.page_number as u32,
+            text_length: stats.text_length as u32,
+            text_coverage: stats.text_coverage as f64,
+            has_substantial_images: stats.has_substantial_images,
+            image_block_count: stats.image_block_count as u32,
+            image_coverage: stats.image_coverage as f64,
+            largest_image_coverage: stats.largest_image_coverage as f64,
+            full_page_image: stats.full_page_image,
+            uncovered_vector_area: stats.uncovered_vector_area.map(|v| v as f64),
+            is_garbled: stats.is_garbled,
+            page_area: stats.page_area as f64,
+            needs_ocr: stats.needs_ocr,
+            reasons: stats
+                .reasons
+                .iter()
+                .map(|r| r.as_str().to_string())
+                .collect(),
+        }
+    }
+}
+
 impl JsParseResult {
     pub fn from_rust(result: &ParseResult, _config: &LiteParseConfig) -> Self {
         Self {

@@ -3,7 +3,10 @@ use napi_derive::napi;
 
 mod types;
 
-use types::{JsLiteParseConfig, JsPageInput, JsParseResult, JsScreenshotResult, JsTextItem};
+use types::{
+    JsLiteParseConfig, JsPageComplexityStats, JsPageInput, JsParseResult, JsScreenshotResult,
+    JsTextItem,
+};
 
 /// Main LiteParse parser class.
 #[napi]
@@ -57,6 +60,31 @@ impl LiteParse {
         let rust_pages: Vec<_> = pages.iter().map(JsPageInput::to_rust).collect();
         let result = self.inner.parse_from_pages(rust_pages, Vec::new());
         Ok(JsParseResult::from_rust(&result, &self.config))
+    }
+
+    /// Determine per-page complexity. Returns one entry per parsed page with
+    /// signals (text coverage, images, garbled text, vector area) and a
+    /// `needsOcr` verdict — a cheap pre-OCR check to decide whether a document
+    /// needs advanced parsing. Accepts a file path (string) or raw PDF bytes.
+    #[napi]
+    pub async fn is_complex(
+        &self,
+        input: Either<String, Buffer>,
+    ) -> Result<Vec<JsPageComplexityStats>> {
+        use liteparse::types::PdfInput;
+
+        let pdf_input = match input {
+            Either::A(path) => PdfInput::Path(path),
+            Either::B(buf) => PdfInput::Bytes(buf.to_vec()),
+        };
+
+        let stats = self
+            .inner
+            .is_complex(pdf_input)
+            .await
+            .map_err(|e| Error::from_reason(e.to_string()))?;
+
+        Ok(stats.iter().map(JsPageComplexityStats::from_rust).collect())
     }
 
     /// Take screenshots of document pages. Returns PNG image buffers.

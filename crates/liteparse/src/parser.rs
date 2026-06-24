@@ -80,6 +80,81 @@ impl LiteParse {
         self
     }
 
+    /// Parse the configured `target_pages` string (e.g. `"1-5,10"`) into an
+    /// explicit page list, or `None` when no selection was configured.
+    fn resolve_target_pages(&self) -> Result<Option<Vec<u32>>, LiteParseError> {
+        self.config
+            .target_pages
+            .as_ref()
+            .map(|s| parse_target_pages(s))
+            .transpose()
+            .map_err(|e| format!("invalid --target-pages: {}", e).into())
+    }
+
+    /// Determine the complexity of each page in a document, returning a vector
+    /// of `PageComplexityStats` for each page. This is useful for deciding
+    /// whether to enable OCR on a per-page basis, or for other heuristics.
+    pub async fn is_complex(
+        &self,
+        input: PdfInput,
+    ) -> Result<Vec<ocr_merge::PageComplexityStats>, LiteParseError> {
+        let log = |msg: &str| {
+            if !self.config.quiet {
+                eprintln!("{}", msg);
+            }
+        };
+
+        let t0 = web_time::Instant::now();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let (validated_input, _guard) =
+            conversion::resolve_pdf_input(input, self.config.password.as_deref(), false).await?;
+
+        #[cfg(target_arch = "wasm32")]
+        let validated_input = input;
+
+        // Determine which pages to extract
+        let target_pages = self.resolve_target_pages()?;
+
+        // Load the document and extract text items. Complexity signals derive
+        // from the text layer and page objects only — embedded image rasters
+        // and hyperlinks are irrelevant here, so both are skipped to keep this
+        // pass fast (its whole purpose is a cheap pre-OCR check).
+        let password = self.config.password.as_deref();
+
+        let lib = Library::init();
+        let document = extract::load_document_from_input(&lib, &validated_input, password)?;
+
+        let (pages, _) = extract::extract_pages_and_images(
+            &document,
+            target_pages.as_deref(),
+            self.config.max_pages,
+            false, // render_images: image rasters not needed for complexity
+            false, // extract_links: irrelevant for complexity stats
+        )?;
+        let t_extract = web_time::Instant::now();
+        log(&format!(
+            "[liteparse] extract: {:.1}ms ({} pages)",
+            t_extract.duration_since(t0).as_secs_f64() * 1000.0,
+            pages.len()
+        ));
+
+        let t_complexity = web_time::Instant::now();
+        let page_complexities = pages
+            .iter()
+            .map(|page| {
+                let page_obj = document.page((page.page_number - 1) as i32)?;
+                ocr_merge::calculate_page_complexity(page, &page_obj)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        log(&format!(
+            "[liteparse] complexity: {:.1}ms",
+            t_complexity.duration_since(t_extract).as_secs_f64() * 1000.0
+        ));
+
+        Ok(page_complexities)
+    }
+
     /// Parse a document from a file path, returning structured results.
     ///
     /// Non-PDF files are automatically converted to PDF first (requires
@@ -113,13 +188,7 @@ impl LiteParse {
         let validated_input = input;
 
         // Determine which pages to extract
-        let target_pages = self
-            .config
-            .target_pages
-            .as_ref()
-            .map(|s| parse_target_pages(s))
-            .transpose()
-            .map_err(|e| format!("invalid --target-pages: {}", e))?;
+        let target_pages = self.resolve_target_pages()?;
 
         // Extract text (and pre-render OCR pages in one PDF load when OCR is on).
         // The PDFium lock is acquired for this entire critical section and

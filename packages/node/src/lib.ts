@@ -7,6 +7,7 @@ import {
   type NativePageInput,
   type NativeTextItem,
   type NativeExtractedImage,
+  type NativePageComplexityStats,
 } from "./native.js";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,44 @@ export interface ScreenshotResult {
   imageBuffer: Buffer;
 }
 
+/**
+ * Per-page complexity signals from {@link LiteParse.isComplex}, used to decide
+ * whether a document needs OCR or other advanced parsing.
+ */
+export interface PageComplexityStats {
+  pageNumber: number;
+  textLength: number;
+  /** Fraction of the page area covered by native text (0–1). */
+  textCoverage: number;
+  hasSubstantialImages: boolean;
+  imageBlockCount: number;
+  /** Summed image-bbox area over page area, clamped to 1. */
+  imageCoverage: number;
+  /** Largest single *counted* image's area over page area, clamped to 1. */
+  largestImageCoverage: number;
+  /**
+   * A single raster covers ≥90% of the page. Full-page backgrounds are excluded
+   * from the image coverage fields, so this is the only signal that tells a scan
+   * apart from a blank page — both otherwise report no text and no images.
+   */
+  fullPageImage: boolean;
+  /**
+   * Filled vector-outline area not covered by native text, in pt². `undefined`
+   * when a cheaper signal already decided the page, so this walk was skipped.
+   */
+  uncoveredVectorArea?: number;
+  isGarbled: boolean;
+  pageArea: number;
+  /** Verdict: whether this page needs more than the cheap text-only path. */
+  needsOcr: boolean;
+  /**
+   * Every reason the page was flagged (e.g. `"scanned"`, `"sparse-text"`,
+   * `"garbled"`). Empty exactly when `needsOcr` is false. This is the value to
+   * route on; new reasons may be added over time.
+   */
+  reasons: string[];
+}
+
 // ---------------------------------------------------------------------------
 // LiteParse class
 // ---------------------------------------------------------------------------
@@ -201,6 +240,33 @@ export class LiteParse {
       text: result.text,
       images: (result.images ?? []).map(toImage),
     };
+  }
+
+  /**
+   * Determine per-page complexity without running a full parse. Returns one
+   * entry per page with signals and a `needsOcr` verdict — a cheap pre-OCR
+   * check to decide whether a document needs advanced parsing.
+   */
+  async isComplex(input: LiteParseInput): Promise<PageComplexityStats[]> {
+    const nativeInput =
+      typeof input === "string" ? input : Buffer.from(input);
+    const stats: NativePageComplexityStats[] =
+      await this._native.isComplex(nativeInput);
+    return stats.map((s) => ({
+      pageNumber: s.pageNumber,
+      textLength: s.textLength,
+      textCoverage: s.textCoverage,
+      hasSubstantialImages: s.hasSubstantialImages,
+      imageBlockCount: s.imageBlockCount,
+      imageCoverage: s.imageCoverage,
+      largestImageCoverage: s.largestImageCoverage,
+      fullPageImage: s.fullPageImage,
+      uncoveredVectorArea: s.uncoveredVectorArea ?? undefined,
+      isGarbled: s.isGarbled,
+      pageArea: s.pageArea,
+      needsOcr: s.needsOcr,
+      reasons: s.reasons,
+    }));
   }
 
   async screenshot(

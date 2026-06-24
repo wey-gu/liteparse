@@ -234,6 +234,71 @@ impl PyScreenshotResult {
     }
 }
 
+#[pyclass(frozen, from_py_object)]
+#[derive(Clone)]
+struct PyPageComplexityStats {
+    #[pyo3(get)]
+    page_number: usize,
+    #[pyo3(get)]
+    text_length: usize,
+    #[pyo3(get)]
+    text_coverage: f32,
+    #[pyo3(get)]
+    has_substantial_images: bool,
+    #[pyo3(get)]
+    image_block_count: usize,
+    #[pyo3(get)]
+    image_coverage: f32,
+    #[pyo3(get)]
+    largest_image_coverage: f32,
+    #[pyo3(get)]
+    full_page_image: bool,
+    #[pyo3(get)]
+    uncovered_vector_area: Option<f32>,
+    #[pyo3(get)]
+    is_garbled: bool,
+    #[pyo3(get)]
+    page_area: f32,
+    #[pyo3(get)]
+    needs_ocr: bool,
+    #[pyo3(get)]
+    reasons: Vec<String>,
+}
+
+#[pymethods]
+impl PyPageComplexityStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "PageComplexityStats(page_number={}, text_length={}, text_coverage={:.2}, needs_ocr={})",
+            self.page_number, self.text_length, self.text_coverage, self.needs_ocr
+        )
+    }
+}
+
+impl PyPageComplexityStats {
+    fn from_rust(stats: &liteparse::ocr_merge::PageComplexityStats) -> Self {
+        Self {
+            page_number: stats.page_number,
+            text_length: stats.text_length,
+            text_coverage: stats.text_coverage,
+            has_substantial_images: stats.has_substantial_images,
+            image_block_count: stats.image_block_count,
+            image_coverage: stats.image_coverage,
+            largest_image_coverage: stats.largest_image_coverage,
+            full_page_image: stats.full_page_image,
+            uncovered_vector_area: stats.uncovered_vector_area,
+            is_garbled: stats.is_garbled,
+            page_area: stats.page_area,
+            needs_ocr: stats.needs_ocr,
+            reasons: stats
+                .reasons
+                .iter()
+                .map(|r| r.as_str().to_string())
+                .collect(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -440,6 +505,30 @@ impl LiteParse {
         Ok(PyParseResult::from_rust(result))
     }
 
+    /// Determine per-page complexity for a document at the given path. Returns
+    /// a list of PageComplexityStats — a cheap pre-OCR check with per-page
+    /// signals and a `needs_ocr` verdict.
+    fn is_complex(&self, py: Python<'_>, input: String) -> PyResult<Vec<PyPageComplexityStats>> {
+        let pdf_input = PdfInput::Path(input);
+        let stats = py
+            .detach(|| self.runtime.block_on(self.inner.is_complex(pdf_input)))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(stats.iter().map(PyPageComplexityStats::from_rust).collect())
+    }
+
+    /// Determine per-page complexity for a document from raw bytes.
+    fn is_complex_bytes(
+        &self,
+        py: Python<'_>,
+        data: Vec<u8>,
+    ) -> PyResult<Vec<PyPageComplexityStats>> {
+        let pdf_input = PdfInput::Bytes(data);
+        let stats = py
+            .detach(|| self.runtime.block_on(self.inner.is_complex(pdf_input)))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(stats.iter().map(PyPageComplexityStats::from_rust).collect())
+    }
+
     /// Take screenshots of document pages. Returns a list of ScreenshotResult.
     ///
     /// Non-PDF files are automatically converted to PDF before rendering when
@@ -517,6 +606,7 @@ fn _liteparse(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyParsedPage>()?;
     m.add_class::<PyTextItem>()?;
     m.add_class::<PyScreenshotResult>()?;
+    m.add_class::<PyPageComplexityStats>()?;
     m.add_function(wrap_pyfunction!(run_cli, m)?)?;
     m.add_function(wrap_pyfunction!(search_items, m)?)?;
     Ok(())

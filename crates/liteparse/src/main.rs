@@ -5,6 +5,7 @@ use liteparse::extract;
 use liteparse::output::{json, text};
 use liteparse::parser::LiteParse;
 use liteparse::render;
+use liteparse::types::PdfInput;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -25,6 +26,8 @@ enum Commands {
     Screenshot(ScreenshotCommand),
     /// Parse multiple documents in batch mode
     BatchParse(BatchParseCommand),
+    /// Check if a document is "complex" enough to require OCR or other advanced parsing
+    IsComplex(IsComplexCommand),
     /// Extract raw text items from a PDF file (no grid projection) [dev tool]
     #[command(hide = true)]
     Extract(ExtractCommand),
@@ -215,6 +218,33 @@ struct ExtractCommand {
     /// Target page number (1-based)
     #[arg(long)]
     page_num: Option<u32>,
+}
+
+#[derive(Args, Debug)]
+struct IsComplexCommand {
+    /// Input file path
+    file: String,
+
+    /// Emit dense, whitespace-free JSON instead of pretty-printed (still valid
+    /// for `jq` and friends).
+    #[arg(long)]
+    compact: bool,
+
+    /// Max pages to parse
+    #[arg(long, default_value = "1000")]
+    max_pages: usize,
+
+    /// Target pages (e.g., "1-5,10,15-20")
+    #[arg(long)]
+    target_pages: Option<String>,
+
+    /// Password for encrypted/protected documents
+    #[arg(long)]
+    password: Option<String>,
+
+    /// Suppress progress output
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 fn parse_output_format(s: &str) -> Result<OutputFormat, String> {
@@ -470,6 +500,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::ImageBounds(cmd) => {
             render::image_bounds(&cmd.pdf_path, cmd.page_num)?;
+        }
+
+        Commands::IsComplex(cmd) => {
+            let config = LiteParseConfig {
+                max_pages: cmd.max_pages,
+                target_pages: cmd.target_pages,
+                password: cmd.password,
+                quiet: cmd.quiet,
+                ..Default::default()
+            };
+            let lp = LiteParse::new(config);
+            let is_complex = lp.is_complex(PdfInput::Path(cmd.file)).await?;
+
+            let complex_pages = is_complex.iter().filter(|c| c.needs_ocr).count();
+
+            // Always emit JSON on stdout so the command composes with `jq` and
+            // friends without a flag. Pretty by default for human readability;
+            // `--compact` drops the whitespace. Both parse identically.
+            let json = if cmd.compact {
+                serde_json::to_string(&is_complex)?
+            } else {
+                serde_json::to_string_pretty(&is_complex)?
+            };
+            println!("{}", json);
+
+            // The human-readable verdict goes to stderr so it never pollutes the
+            // JSON on stdout. The exit code below carries the same signal for
+            // scripts that don't want to read either stream.
+            if !cmd.quiet {
+                let verdict = if complex_pages > 0 {
+                    "COMPLEX"
+                } else {
+                    "SIMPLE"
+                };
+                eprintln!(
+                    "{} — {}/{} page(s) need OCR",
+                    verdict,
+                    complex_pages,
+                    is_complex.len()
+                );
+            }
+
+            // Exit non-zero when any page needs OCR, so the command is usable as
+            // a shell predicate: exit 0 (simple) → `&& parse --no-ocr` is safe.
+            if complex_pages > 0 {
+                std::process::exit(1);
+            }
         }
     }
 

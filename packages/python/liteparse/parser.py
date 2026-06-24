@@ -9,6 +9,7 @@ from liteparse._liteparse import search_items as _native_search_items
 from .types import (
     ExtractedImage,
     LiteParseConfig,
+    PageComplexityStats,
     ParsedPage,
     ParseError,
     ParseResult,
@@ -172,6 +173,58 @@ class LiteParse:
                     raise FileNotFoundError(f"File not found: {file_path}")
                 native_result = self._native.parse(str(file_path.absolute()))
             return _convert_native_result(native_result)
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            raise ParseError(str(e)) from e
+
+    def is_complex(
+        self,
+        file_data: Union[str, Path, bytes],
+    ) -> List[PageComplexityStats]:
+        """
+        Determine per-page complexity without running a full parse.
+
+        Returns one entry per page with signals (text coverage, images, garbled
+        text, vector area) and a ``needs_ocr`` verdict — a cheap pre-OCR check to
+        decide whether a document needs advanced parsing.
+
+        Args:
+            file_data: Path to the document file, or raw PDF bytes.
+
+        Returns:
+            List of PageComplexityStats, one per page.
+
+        Raises:
+            ParseError: If the check fails.
+            FileNotFoundError: If the file doesn't exist.
+        """
+        try:
+            if isinstance(file_data, bytes):
+                native_stats = self._native.is_complex_bytes(file_data)
+            else:
+                file_path = Path(file_data)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"File not found: {file_path}")
+                native_stats = self._native.is_complex(str(file_path.absolute()))
+            return [
+                PageComplexityStats(
+                    page_number=s.page_number,
+                    text_length=s.text_length,
+                    text_coverage=s.text_coverage,
+                    has_substantial_images=s.has_substantial_images,
+                    image_block_count=s.image_block_count,
+                    image_coverage=s.image_coverage,
+                    largest_image_coverage=s.largest_image_coverage,
+                    full_page_image=s.full_page_image,
+                    uncovered_vector_area=s.uncovered_vector_area,
+                    is_garbled=s.is_garbled,
+                    page_area=s.page_area,
+                    needs_ocr=s.needs_ocr,
+                    reasons=list(s.reasons),
+                )
+                for s in native_stats
+            ]
         except FileNotFoundError:
             raise
         except Exception as e:

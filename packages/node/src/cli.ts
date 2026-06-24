@@ -142,6 +142,63 @@ program
   });
 
 program
+  .command("is-complex")
+  .description(
+    "Check if a document is 'complex' enough to require OCR or other advanced parsing",
+  )
+  .argument("<file>", "Path to the document file")
+  .option("--compact", "Emit dense, whitespace-free JSON instead of pretty")
+  .option("--max-pages <n>", "Max pages to parse", parseInt)
+  .option(
+    "--target-pages <pages>",
+    'Pages to check (e.g., "1-5,10,15-20")',
+  )
+  .option("--password <password>", "Password for encrypted documents")
+  .option("-q, --quiet", "Suppress progress output")
+  .action(async (file: string, opts: Record<string, unknown>) => {
+    try {
+      const config: Partial<LiteParseConfig> = {};
+      if (opts.maxPages) config.maxPages = opts.maxPages as number;
+      if (opts.targetPages) config.targetPages = opts.targetPages as string;
+      if (opts.password) config.password = opts.password as string;
+      if (opts.quiet) config.quiet = true;
+
+      const parser = new LiteParse(config);
+      const stats = await parser.isComplex(file);
+
+      const complexPages = stats.filter((s) => s.needsOcr).length;
+
+      // Always emit JSON on stdout so the command composes with `jq` without a
+      // flag. Pretty by default; `--compact` drops the whitespace. Both parse
+      // identically for any reader.
+      process.stdout.write(
+        opts.compact
+          ? JSON.stringify(stats)
+          : JSON.stringify(stats, null, 2),
+      );
+      process.stdout.write("\n");
+
+      // Human verdict goes to stderr so it never pollutes the JSON on stdout;
+      // the exit code below carries the same signal for scripts.
+      if (!opts.quiet) {
+        const verdict = complexPages > 0 ? "COMPLEX" : "SIMPLE";
+        console.error(
+          `${verdict} — ${complexPages}/${stats.length} page(s) need OCR`,
+        );
+      }
+
+      // Exit non-zero when any page needs OCR, so the command is usable as a
+      // shell predicate (e.g. `is-complex doc.pdf && parse --no-ocr`).
+      if (complexPages > 0) process.exit(1);
+    } catch (err) {
+      console.error(
+        `Error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  });
+
+program
   .command("screenshot")
   .description("Generate screenshots of document pages")
   .argument("<file>", "Path to the document file")
