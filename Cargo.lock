@@ -1248,6 +1248,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 name = "liteparse"
 version = "2.1.1"
 dependencies = [
+ "blake3",
  "clap",
  "image",
  "infer",
@@ -1255,6 +1256,7 @@ dependencies = [
  "liteparse-pdfium-sys",
  "ordered-float",
  "reqwest 0.13.3",
+ "rmp",
  "serde",
  "serde_json",
  "serial_test",
@@ -2027,6 +2029,15 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

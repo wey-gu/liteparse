@@ -41,6 +41,28 @@ pub struct ScreenshotResult {
     pub image_bytes: Vec<u8>,
 }
 
+/// Env var pointing at a fragmented glyph-outline → unicode font database
+/// directory (`%02x%02x.msgpack` shards). When set, [`LiteParse::new`]
+/// auto-wires a [`crate::FontDbResolver`] so buggy/obfuscated-font glyphs are
+/// recovered without any extra wiring. Unset (default) leaves the hook dormant.
+#[cfg(not(target_arch = "wasm32"))]
+const FONT_DB_DIR_ENV: &str = "LITEPARSE_FONT_DB_DIR";
+
+/// Build the default glyph resolver from the environment, if configured.
+#[cfg(not(target_arch = "wasm32"))]
+fn default_glyph_resolver() -> Option<std::sync::Arc<dyn crate::GlyphResolver>> {
+    let dir = std::env::var_os(FONT_DB_DIR_ENV)?;
+    if dir.is_empty() {
+        return None;
+    }
+    Some(std::sync::Arc::new(crate::FontDbResolver::new(dir)))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_glyph_resolver() -> Option<std::sync::Arc<dyn crate::GlyphResolver>> {
+    None
+}
+
 /// Main LiteParse orchestrator.
 ///
 /// ### Thread safety
@@ -63,6 +85,11 @@ pub struct LiteParse {
     /// mechanism for plugging an OCR engine in environments without the
     /// built-ins (e.g. WASM, where the JS side supplies a callback engine).
     ocr_engine_override: Option<std::sync::Arc<dyn OcrEngine>>,
+    /// Optional caller-provided glyph recovery hook. When set, it is consulted
+    /// as a last resort for buggy/obfuscated-font glyphs that liteparse's
+    /// built-in cmap/AGL recovery could not decode. The published package ships
+    /// none; the platform build injects an outline → unicode font-DB resolver.
+    glyph_resolver: Option<std::sync::Arc<dyn crate::GlyphResolver>>,
 }
 
 impl LiteParse {
@@ -70,6 +97,7 @@ impl LiteParse {
         Self {
             config,
             ocr_engine_override: None,
+            glyph_resolver: default_glyph_resolver(),
         }
     }
 
@@ -77,6 +105,17 @@ impl LiteParse {
     /// `ocr_server_url` / built-in Tesseract availability.
     pub fn with_ocr_engine(mut self, engine: std::sync::Arc<dyn OcrEngine>) -> Self {
         self.ocr_engine_override = Some(engine);
+        self
+    }
+
+    /// Inject a glyph recovery hook. When set, glyphs that liteparse considers
+    /// untrusted and cannot decode with its built-in cmap/AGL recovery are
+    /// passed to the resolver as vector-outline segments for a final attempt.
+    pub fn with_glyph_resolver(
+        mut self,
+        resolver: std::sync::Arc<dyn crate::GlyphResolver>,
+    ) -> Self {
+        self.glyph_resolver = Some(resolver);
         self
     }
 
@@ -139,6 +178,7 @@ impl LiteParse {
                 render_images,
                 self.config.extract_links
                     && self.config.output_format == crate::config::OutputFormat::Markdown,
+                self.glyph_resolver.as_deref(),
             )?;
             let t_extract = web_time::Instant::now();
             log(&format!(

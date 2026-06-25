@@ -19,6 +19,7 @@ default = ["tesseract"]
 tesseract = ["dep:tesseract-rs"]
 
 [dependencies]
+blake3 = "1"
 clap = { version = "4.5.55", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 infer = "0.19.0"
@@ -36,6 +37,7 @@ url = "2"
 web-time = "1.1.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rmp = "0.8"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "fs", "process"] }
 
 [dev-dependencies]

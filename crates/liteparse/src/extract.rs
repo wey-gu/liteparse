@@ -49,7 +49,7 @@ pub(crate) fn extract_pages_from_document(
     target_pages: Option<&[u32]>,
     max_pages: usize,
 ) -> Result<Vec<LitePage>, LiteParseError> {
-    Ok(extract_pages_and_images(document, target_pages, max_pages, false, false)?.0)
+    Ok(extract_pages_and_images(document, target_pages, max_pages, false, false, None)?.0)
 }
 
 /// Same as `extract_pages_from_document` but optionally also renders every
@@ -63,6 +63,7 @@ pub(crate) fn extract_pages_and_images(
     max_pages: usize,
     render_images: bool,
     extract_links: bool,
+    glyph_resolver: Option<&dyn crate::GlyphResolver>,
 ) -> Result<(Vec<LitePage>, Vec<ExtractedImage>), LiteParseError> {
     let page_count = document.page_count();
     let mut pages = Vec::new();
@@ -89,7 +90,7 @@ pub(crate) fn extract_pages_and_images(
             right: page.width(),
             bottom: 0.0,
         });
-        let mut text_items = extract_page_text_items(&page, &text_page, &view_box)?;
+        let mut text_items = extract_page_text_items(&page, &text_page, &view_box, glyph_resolver)?;
         if extract_links {
             assign_links(&mut text_items, &page.links(&view_box));
         }
@@ -522,6 +523,7 @@ fn extract_page_text_items(
     page: &Page,
     text_page: &TextPage,
     view_box: &RectF,
+    glyph_resolver: Option<&dyn crate::GlyphResolver>,
 ) -> Result<Vec<TextItem>, LiteParseError> {
     let char_count = text_page.char_count();
     if char_count <= 0 {
@@ -557,6 +559,7 @@ fn extract_page_text_items(
     let mut glyph_decoder = GlyphDecoder::new(
         std::env::var("LITEPARSE_DEBUG_GLYPH").is_ok(),
         garbage_fonts,
+        glyph_resolver,
     );
 
     for i in 0..char_count {
@@ -1015,7 +1018,7 @@ fn adjust_angle_for_rotation(angle_rad: f32, page_rotation: i32) -> f32 {
 }
 
 /// Decompose scale factors from a 2D affine matrix.
-/// Computes eigenvalues of M^T * M, matching the platform's Parse_decomposeScale.
+/// Computes eigenvalues of M^T * M.
 fn decompose_scale(m: &pdfium::Matrix) -> (f32, f32) {
     let (a, b, c, d) = (m.a as f64, m.b as f64, m.c as f64, m.d as f64);
     // M^T * M
@@ -1050,7 +1053,6 @@ fn median_f32(values: &[f32]) -> Option<f32> {
 }
 
 /// Check if a font is "buggy" based on its name and type.
-/// Mirrors ParseFont_isBuggyFont from the platform.
 fn is_buggy_font(font_name: &str, font_type: FontType) -> bool {
     // TrueType subset fonts: name starts with "TT" or contains "+TT"
     if font_name.starts_with("TT") || font_name.contains("+TT") {
@@ -1067,8 +1069,12 @@ fn is_buggy_font(font_name: &str, font_type: FontType) -> bool {
 }
 
 /// Check if a Unicode codepoint indicates buggy encoding.
+/// C0 controls (<=0x1F), DEL + C1 controls (0x7F-0x9F), and the private use area.
+/// None of these are ever legitimate rendered text; C1 controls in particular
+/// are emitted by a common class of subset fonts that mangle ToUnicode into
+/// the 0x80-0x9F range.
 fn is_buggy_codepoint(unicode: u32) -> bool {
-    unicode <= 0x1F || (unicode > 0xE000 && unicode <= 0xF8FF)
+    unicode <= 0x1F || (0x7F..=0x9F).contains(&unicode) || (unicode > 0xE000 && unicode <= 0xF8FF)
 }
 
 fn color_to_argb_hex(c: &pdfium::Color) -> String {
@@ -1083,7 +1089,7 @@ fn color_to_argb_hex(c: &pdfium::Color) -> String {
 /// PostScript glyph name the font assigns to the charcode (from /Encoding
 /// /Differences or the embedded font program) resolved against the Adobe
 /// Glyph List is the authoritative signal in both cases.
-struct GlyphDecoder {
+struct GlyphDecoder<'a> {
     fonts: std::collections::HashMap<usize, FontGlyphInfo>,
     /// Chars arrive in runs per text object; cache the last object's font key
     /// to skip the FPDFTextObj_GetFont FFI call on the common path.
@@ -1092,6 +1098,9 @@ struct GlyphDecoder {
     /// Font handles whose /ToUnicode the prescan flagged as garbage (high
     /// fraction of control/PUA unicodes across the page).
     garbage_fonts: std::collections::HashSet<usize>,
+    /// Optional last-resort recovery hook for untrusted glyphs that the
+    /// built-in glyph-name / reverse-cmap recovery could not decode.
+    resolver: Option<&'a dyn crate::GlyphResolver>,
     debug: bool,
 }
 
@@ -1101,6 +1110,13 @@ struct FontGlyphInfo {
     /// the ToUnicode as garbage): PDFium's unicode values for this font are
     /// untrusted, so every charcode gets a recovery try.
     untrusted: bool,
+    /// The font's name matches the legacy buggy-subset heuristic while
+    /// declaring a *standard* base encoding (e.g. MacRomanEncoding) — the
+    /// encoding is a lie, so PDFium derives glyph names from it that are just
+    /// as wrong as the unicode. Skip glyph-name recovery for these and rely on
+    /// the embedded cmap / outline-hash resolver instead (matches the C path,
+    /// which ignores glyph names for `PARSE_TEXT_FONT_BUGGY` fonts).
+    encoding_lies: bool,
     /// charcode → resolved replacement text (None = unrecoverable)
     cache: std::collections::HashMap<u32, Option<String>>,
     /// Lazily-built glyph_index → unicode map from the embedded font
@@ -1108,11 +1124,16 @@ struct FontGlyphInfo {
     reverse_cmap: Option<Option<std::collections::HashMap<u32, u32>>>,
 }
 
-impl GlyphDecoder {
-    fn new(debug: bool, garbage_fonts: std::collections::HashSet<usize>) -> Self {
+impl<'a> GlyphDecoder<'a> {
+    fn new(
+        debug: bool,
+        garbage_fonts: std::collections::HashSet<usize>,
+        resolver: Option<&'a dyn crate::GlyphResolver>,
+    ) -> Self {
         Self {
             fonts: std::collections::HashMap::new(),
             garbage_fonts,
+            resolver,
             last_obj: 0,
             last_key: 0,
             debug,
@@ -1139,7 +1160,22 @@ impl GlyphDecoder {
             self.fonts.entry(key).or_insert_with(|| {
                 let has_to_unicode = font.has_to_unicode();
                 let encoding = font.encoding();
+                // Embedded subset fonts whose name matches the legacy "buggy
+                // font" heuristic (TrueType `+TT` / Type1 `......_` subset tags)
+                // routinely lie about their encoding: a standard base encoding
+                // (e.g. MacRomanEncoding) decodes to a shifted alphabet because
+                // the embedded glyph program doesn't follow it. PDFium's unicode
+                // for these looks plausible (printable letters), so the cheap
+                // per-glyph suspicion checks never fire — flag the whole font
+                // untrusted so every glyph goes through recovery. Mirrors the C
+                // path's `PARSE_TEXT_FONT_BUGGY` name flagging (embedded &&
+                // isBuggyFont).
+                let name_buggy = font.is_embedded()
+                    && font
+                        .base_name()
+                        .is_some_and(|name| is_buggy_font(&name, font.font_type()));
                 let untrusted = garbage
+                    || name_buggy
                     || (!has_to_unicode
                         && !matches!(
                             encoding.as_deref(),
@@ -1150,17 +1186,19 @@ impl GlyphDecoder {
                         ));
                 if debug {
                     eprintln!(
-                        "[glyph] font={:?} to_unicode={} encoding={:?} garbage={} untrusted={}",
+                        "[glyph] font={:?} to_unicode={} encoding={:?} garbage={} name_buggy={} untrusted={}",
                         font.base_name(),
                         has_to_unicode,
                         encoding,
                         garbage,
+                        name_buggy,
                         untrusted
                     );
                 }
                 FontGlyphInfo {
                     font,
                     untrusted,
+                    encoding_lies: name_buggy,
                     cache: std::collections::HashMap::new(),
                     reverse_cmap: None,
                 }
@@ -1177,8 +1215,10 @@ impl GlyphDecoder {
             return None;
         }
         let debug = self.debug;
+        let resolver = self.resolver;
 
         let char_code = ch.char_code();
+        let encoding_lies = info.encoding_lies;
         let FontGlyphInfo {
             font,
             cache,
@@ -1189,10 +1229,19 @@ impl GlyphDecoder {
             .entry(char_code)
             .or_insert_with(|| {
                 let name = font.char_glyph_name(char_code);
-                let resolved = name
-                    .as_deref()
-                    .and_then(resolve_glyph_name)
-                    .filter(|r| r.chars().all(|c| !c.is_control()));
+                // Glyph names of buggy-subset fonts are derived from a lying
+                // base encoding, so they mis-decode exactly like PDFium's
+                // unicode (e.g. charcode 0x53 → name "S" but the glyph draws
+                // 'R'). Skip name recovery for them so the embedded-cmap /
+                // outline-hash resolver below — the only trustworthy signals —
+                // get the chance to correct the glyph.
+                let resolved = if encoding_lies {
+                    None
+                } else {
+                    name.as_deref()
+                        .and_then(resolve_glyph_name)
+                        .filter(|r| r.chars().all(|c| !c.is_control()))
+                };
                 // Fallback: reverse-map the glyph index through the embedded
                 // font program's own cmap table.
                 let resolved = resolved.or_else(|| {
@@ -1227,6 +1276,22 @@ impl GlyphDecoder {
                         Some(s) => s.to_string(),
                         None => c.to_string(),
                     })
+                });
+                // Last resort: hand the glyph's vector outline to the injected
+                // resolver. Only reached for untrusted glyphs the deterministic 
+                // recovery above could not decode.
+                let resolved = resolved.or_else(|| {
+                    let resolver = resolver?;
+                    let segments =
+                        font.glyph_path_segments(char_code, crate::GLYPH_RESOLVER_FONT_SIZE)?;
+                    let text = resolver.resolve(&segments)?;
+                    if text.is_empty() || text.chars().any(|c| c.is_control()) {
+                        return None;
+                    }
+                    if debug {
+                        eprintln!("[glyph] cc=0x{char_code:04X} resolver -> {text:?}");
+                    }
+                    Some(text)
                 });
                 if debug {
                     eprintln!(
@@ -1792,6 +1857,11 @@ mod tests {
         assert!(is_buggy_codepoint(0xF8FF));
         assert!(!is_buggy_codepoint(0xE000));
         assert!(!is_buggy_codepoint(0xF900));
+        // DEL + C1 controls (0x7F-0x9F): mangled-ToUnicode signature.
+        assert!(is_buggy_codepoint(0x7F));
+        assert!(is_buggy_codepoint(0x80));
+        assert!(is_buggy_codepoint(0x9F));
+        assert!(!is_buggy_codepoint(0xA0));
     }
 
     #[test]

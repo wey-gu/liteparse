@@ -7,6 +7,9 @@
 // ── Public API re-exports ──────────────────────────────────────────────
 pub use config::{LiteParseConfig, OutputFormat};
 pub use error::LiteParseError;
+#[cfg(not(target_arch = "wasm32"))]
+pub use font_db_resolver::FontDbResolver;
+pub use glyph_resolver::{GLYPH_RESOLVER_FONT_SIZE, GlyphResolver};
 pub use parser::{LiteParse, ParseResult, ScreenshotResult};
 pub use search::{SearchOptions, search_items};
 pub use types::{ParsedPage, TextItem};
@@ -14,6 +17,7 @@ pub use types::{ParsedPage, TextItem};
 // ── Modules with user-facing types (visible in docs) ───────────────────
 pub mod config;
 pub mod error;
+pub mod glyph_resolver;
 pub mod parser;
 pub mod search;
 pub mod types;
@@ -28,6 +32,9 @@ pub mod extract;
 pub mod figure_cluster;
 #[doc(hidden)]
 pub mod font_cmap;
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod font_db_resolver;
 #[doc(hidden)]
 pub mod glyph_names;
 #[doc(hidden)]
