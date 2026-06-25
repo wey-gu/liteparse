@@ -118,7 +118,7 @@ impl LiteParse {
         self.glyph_resolver = Some(resolver);
         self
     }
-    
+
     /// Parse the configured `target_pages` string (e.g. `"1-5,10"`) into an
     /// explicit page list, or `None` when no selection was configured.
     fn resolve_target_pages(&self) -> Result<Option<Vec<u32>>, LiteParseError> {
@@ -170,6 +170,7 @@ impl LiteParse {
             self.config.max_pages,
             false, // render_images: image rasters not needed for complexity
             false, // extract_links: irrelevant for complexity stats
+            self.glyph_resolver.as_deref(),
         )?;
         let t_extract = web_time::Instant::now();
         log(&format!(
