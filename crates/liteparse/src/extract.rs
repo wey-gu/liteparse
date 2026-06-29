@@ -1110,7 +1110,7 @@ struct FontGlyphInfo {
     /// the ToUnicode as garbage): PDFium's unicode values for this font are
     /// untrusted, so every charcode gets a recovery try.
     untrusted: bool,
-    /// The font's name matches the legacy buggy-subset heuristic while
+    /// The font's name matches the buggy-subset heuristic while
     /// declaring a *standard* base encoding (e.g. MacRomanEncoding) — the
     /// encoding is a lie, so PDFium derives glyph names from it that are just
     /// as wrong as the unicode. Skip glyph-name recovery for these and rely on
@@ -1160,7 +1160,7 @@ impl<'a> GlyphDecoder<'a> {
             self.fonts.entry(key).or_insert_with(|| {
                 let has_to_unicode = font.has_to_unicode();
                 let encoding = font.encoding();
-                // Embedded subset fonts whose name matches the legacy "buggy
+                // Embedded subset fonts whose name matches the "buggy
                 // font" heuristic (TrueType `+TT` / Type1 `......_` subset tags)
                 // routinely lie about their encoding: a standard base encoding
                 // (e.g. MacRomanEncoding) decodes to a shifted alphabet because

@@ -109,8 +109,8 @@ pub struct HttpOcrEngine {
 
 /// Retry/backoff policy for OCR HTTP requests. The default is up to 10
 /// attempts, 1s base backoff doubling to a 10s cap, plus jitter, with a fast
-/// path for dropped connections) so that liteparse-driven OCR is as resilient
-/// to a down / rate-limited `/ocr` endpoint as the legacy worker path was.
+/// path for dropped connections) so that liteparse-driven OCR is resilient
+/// to a down / rate-limited `/ocr` endpoint.
 /// Without this, a transient outage or a 429 burst exhausts the old 3-attempt /
 /// sub-second-backoff budget and the page's OCR is lost.
 #[derive(Debug, Clone)]
