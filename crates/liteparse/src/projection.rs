@@ -14,6 +14,15 @@ const FLOWING_COLUMN_GAP_MULTIPLIER: f32 = 4.0;
 const FLOWING_MIN_LINE_ITEMS: usize = 3;
 const FLOWING_SPACE_HEIGHT_RATIO: f32 = 0.15;
 const FLOWING_SPACE_MIN_THRESHOLD: f32 = 0.3;
+// Space threshold as a fraction of the line's median character advance
+// (horizontal em proxy), used to bound the height-based threshold from above.
+// `height*0.15` over-estimates the inter-word gap for tall display/heading
+// fonts (their ascender+leading make them ~2.7× their advance vs ~2× for body
+// text), so it sits above the genuine word gaps and swallows the spaces
+// ("WhichJournalistsdoPeople"). 0.30 is the body-text crossover — body height ≈
+// 2×advance, so `advance*0.30 ≈ height*0.15` — so taking the smaller of the two
+// leaves body text unchanged and only bites tall fonts.
+const FLOWING_SPACE_ADV_RATIO: f32 = 0.30;
 const FLOWING_MAX_INDENT: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1480,13 +1489,33 @@ fn render_line_as_flowing_text(
 
     let mut result = " ".repeat(indent);
 
+    // Median per-glyph advance across the line, used to bound the space
+    // threshold so tall display fonts don't get a threshold above their real
+    // word gaps. `+inf` (no bound) when the line has no measurable advances.
+    let adv_threshold = {
+        let mut advs: Vec<f32> = line
+            .iter()
+            .filter_map(|it| {
+                let n = it.item.text.chars().filter(|c| !c.is_whitespace()).count();
+                (n > 0 && it.item.width > 0.0).then(|| it.item.width / n as f32)
+            })
+            .collect();
+        if advs.is_empty() {
+            f32::INFINITY
+        } else {
+            advs.sort_by(f32::total_cmp);
+            advs[advs.len() / 2] * FLOWING_SPACE_ADV_RATIO
+        }
+    };
+
     for i in 0..line.len() {
         if i > 0 {
             let prev = &line[i - 1].item;
             let cur = &line[i].item;
             let gap = cur.x - (prev.x + prev.width);
-            let space_threshold =
-                (cur.height * FLOWING_SPACE_HEIGHT_RATIO).max(FLOWING_SPACE_MIN_THRESHOLD);
+            let space_threshold = (cur.height * FLOWING_SPACE_HEIGHT_RATIO)
+                .min(adv_threshold)
+                .max(FLOWING_SPACE_MIN_THRESHOLD);
             if gap > space_threshold && !result.ends_with(' ') {
                 result.push(' ');
             }
