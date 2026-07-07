@@ -611,6 +611,10 @@ fn extract_page_text_items(
             (it.next().unwrap(), it.as_str())
         } else {
             match unicode {
+                0x01 => (' ', ""), // SOH → space: buggy subset fonts (e.g. some
+                // Calibri/Cambria embeds) encode the space glyph as 0x01. Left as
+                // a raw control char it fuses adjacent words ("StatisticsCheatSheet");
+                // as a space it drives the normal pending-space word break below.
                 0x02 => ('-', ""),   // STX → hyphen (common in some PDF encodings)
                 0x1A => ('f', "f"),  // ff ligature
                 0x1B => ('f', "t"),  // ft ligature
@@ -912,6 +916,18 @@ fn dedup_overlapping_items(items: &mut Vec<TextItem>, debug: bool) {
             let a = &items[i];
             let b = &items[j];
 
+            // Diagonal (non-right-angle) text has a *loose* axis-aligned
+            // bounding box — the hull of a rotated glyph run is far larger than
+            // the ink, so two stacked lines of the same skewed block (e.g.
+            // "Paris has the" above "eiffel tower" at 51°) report heavy bbox
+            // overlap even though the glyphs never touch. Dedup keys off AABB
+            // overlap, so it would wrongly drop one of those lines. Skip the
+            // comparison entirely when either item is diagonal; true duplicate
+            // stamps are upright and still handled below.
+            if is_diagonal_rotation(a.rotation) || is_diagonal_rotation(b.rotation) {
+                continue;
+            }
+
             // Compute intersection area
             let ix_left = a.x.max(b.x);
             let ix_right = (a.x + a.width).min(b.x + b.width);
@@ -1009,6 +1025,56 @@ fn dedup_overlapping_items(items: &mut Vec<TextItem>, debug: bool) {
         idx += 1;
         k
     });
+}
+
+/// True when `rotation` (degrees) is more than 2° off the nearest right angle
+/// (0/90/180/270). Mirrors the host worker's diagonal-text rule
+/// `|r - round(r / 90) * 90| > 2`, so a page's diagonal watermark/stamp text
+/// is classified identically on both sides.
+fn is_diagonal_rotation(rotation: f32) -> bool {
+    let nearest_right_angle = (rotation / 90.0).round() * 90.0;
+    (rotation - nearest_right_angle).abs() > 2.0
+}
+
+/// Apply caller-requested content filters to already-extracted (and
+/// OCR-merged) pages, in place, just before grid projection:
+///
+/// * `skip_diagonal` drops skewed text (watermarks, rotated stamps).
+/// * `crop_box` keeps only items lying *entirely* inside the surviving page
+///   region — fractions cropped from each side, top-left origin, matching the
+///   host worker's bounding-box crop.
+///
+/// Running here (after OCR merge, before projection) means both native and
+/// OCR-sourced items are filtered and removed text never reaches the output.
+/// No-op when neither filter is requested.
+pub(crate) fn apply_content_filters(
+    pages: &mut [LitePage],
+    crop_box: Option<&crate::config::CropBox>,
+    skip_diagonal: bool,
+) {
+    if crop_box.is_none() && !skip_diagonal {
+        return;
+    }
+    for page in pages.iter_mut() {
+        if skip_diagonal {
+            page.text_items
+                .retain(|it| !is_diagonal_rotation(it.rotation));
+        }
+        if let Some(cb) = crop_box {
+            let w = page.page_width;
+            let h = page.page_height;
+            let min_x = cb.left * w;
+            let max_x = (1.0 - cb.right) * w;
+            let min_y = cb.top * h;
+            let max_y = (1.0 - cb.bottom) * h;
+            page.text_items.retain(|it| {
+                it.x >= min_x
+                    && it.x + it.width <= max_x
+                    && it.y >= min_y
+                    && it.y + it.height <= max_y
+            });
+        }
+    }
 }
 
 /// Adjust character angle for page rotation.
@@ -1859,6 +1925,25 @@ mod tests {
     }
 
     #[test]
+    fn dedup_keeps_overlapping_diagonal_lines() {
+        // Two stacked lines of one rotated block: their loose axis-aligned
+        // bounding boxes overlap heavily, but both must survive (the
+        // "Paris has the" / "eiffel tower" @51° regression).
+        let mut items = vec![
+            TextItem {
+                rotation: 51.0,
+                ..ti("Paris has the", 0.0, 0.0, 100.0, 40.0)
+            },
+            TextItem {
+                rotation: 51.0,
+                ..ti("eiffel tower", 5.0, 5.0, 100.0, 40.0)
+            },
+        ];
+        dedup_overlapping_items(&mut items, false);
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
     fn dedup_noop_for_empty_or_single() {
         let mut empty: Vec<TextItem> = vec![];
         dedup_overlapping_items(&mut empty, false);
@@ -1866,6 +1951,81 @@ mod tests {
         let mut one = vec![ti("x", 0.0, 0.0, 1.0, 1.0)];
         dedup_overlapping_items(&mut one, false);
         assert_eq!(one.len(), 1);
+    }
+
+    fn rot(text: &str, rotation: f32) -> TextItem {
+        TextItem {
+            rotation,
+            ..ti(text, 10.0, 10.0, 20.0, 5.0)
+        }
+    }
+
+    fn page_with(items: Vec<TextItem>) -> LitePage {
+        LitePage {
+            page_number: 1,
+            page_width: 100.0,
+            page_height: 100.0,
+            text_items: items,
+            graphics: Vec::new(),
+            struct_nodes: Vec::new(),
+            image_refs: Vec::new(),
+        }
+    }
+
+    fn texts(page: &LitePage) -> Vec<&str> {
+        page.text_items.iter().map(|it| it.text.as_str()).collect()
+    }
+
+    #[test]
+    fn is_diagonal_rotation_matches_worker_rule() {
+        // Within 2° of a right angle → not diagonal.
+        assert!(!is_diagonal_rotation(0.0));
+        assert!(!is_diagonal_rotation(1.9));
+        assert!(!is_diagonal_rotation(90.0));
+        assert!(!is_diagonal_rotation(271.5));
+        assert!(!is_diagonal_rotation(358.5));
+        // More than 2° off → diagonal (2.57° San-francisco case, 51°, 324°).
+        assert!(is_diagonal_rotation(2.57));
+        assert!(is_diagonal_rotation(51.0));
+        assert!(is_diagonal_rotation(324.0));
+    }
+
+    #[test]
+    fn skip_diagonal_keeps_only_upright_text() {
+        let mut pages = vec![page_with(vec![
+            rot("upright", 0.0),
+            rot("slightly-skewed", 2.57),
+            rot("diagonal", 51.0),
+            rot("landscape", 90.0),
+        ])];
+        apply_content_filters(&mut pages, None, true);
+        assert_eq!(texts(&pages[0]), vec!["upright", "landscape"]);
+    }
+
+    #[test]
+    fn crop_box_keeps_only_items_fully_inside_region() {
+        // 100×100 page; crop away the left half (left = 0.5) → survivors must
+        // sit entirely within x ∈ [50, 100].
+        let cb = crate::config::CropBox {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.5,
+        };
+        let mut pages = vec![page_with(vec![
+            ti("left", 10.0, 10.0, 20.0, 5.0),     // fully left → dropped
+            ti("straddle", 45.0, 10.0, 20.0, 5.0), // crosses x=50 → dropped
+            ti("right", 60.0, 10.0, 20.0, 5.0),    // fully right → kept
+        ])];
+        apply_content_filters(&mut pages, Some(&cb), false);
+        assert_eq!(texts(&pages[0]), vec!["right"]);
+    }
+
+    #[test]
+    fn content_filters_noop_without_options() {
+        let mut pages = vec![page_with(vec![rot("diagonal", 45.0)])];
+        apply_content_filters(&mut pages, None, false);
+        assert_eq!(pages[0].text_items.len(), 1);
     }
 
     #[test]

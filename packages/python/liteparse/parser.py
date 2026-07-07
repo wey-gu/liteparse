@@ -1,7 +1,7 @@
 """LiteParse Python wrapper - native Rust bindings via PyO3."""
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from liteparse._liteparse import LiteParse as _NativeLiteParse
 from liteparse._liteparse import search_items as _native_search_items
@@ -107,6 +107,8 @@ class LiteParse:
         ocr_failure_fatal: Optional[bool] = None,
         ocr_hedge_delays_ms: Optional[List[int]] = None,
         emit_word_boxes: Optional[bool] = None,
+        crop_box: Optional[Tuple[float, float, float, float]] = None,
+        skip_diagonal_text: Optional[bool] = None,
     ):
         """
         Initialize LiteParse parser.
@@ -143,6 +145,15 @@ class LiteParse:
                 (``TextItem.words``). Default False. Word boxes roughly double
                 the text-item payload, so enable only for word-level bbox
                 attribution.
+            crop_box: Restrict output to a page sub-region, as a
+                ``(top, right, bottom, left)`` tuple where each value is the
+                fraction cropped from that side (top-left origin, each in
+                ``[0, 1]``); e.g. ``(0, 0, 0, 0.5)`` keeps the right half. A
+                text item survives only if it lies entirely inside the
+                remaining rectangle. None (default) keeps the whole page.
+            skip_diagonal_text: Drop diagonal text — items whose rotation is
+                more than 2° off the nearest right angle (0/90/180/270).
+                Default False. Use to exclude rotated watermarks/stamps.
         """
         kwargs = {}
         if ocr_enabled is not None:
@@ -181,6 +192,10 @@ class LiteParse:
             kwargs["ocr_hedge_delays_ms"] = ocr_hedge_delays_ms
         if emit_word_boxes is not None:
             kwargs["emit_word_boxes"] = emit_word_boxes
+        if crop_box is not None:
+            kwargs["crop_box"] = crop_box
+        if skip_diagonal_text is not None:
+            kwargs["skip_diagonal_text"] = skip_diagonal_text
 
         self._native = _NativeLiteParse(**kwargs)
 

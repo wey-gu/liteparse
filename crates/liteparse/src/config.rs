@@ -60,6 +60,30 @@ pub struct LiteParseConfig {
     /// `false`, `TextItem.words` is always empty and the per-word tracking is
     /// skipped entirely (zero allocation).
     pub emit_word_boxes: bool,
+    /// Restrict output to a sub-region of every page. Each field is the
+    /// fraction of the page to crop away from that side (e.g. `left = 0.5`
+    /// discards the left half). A text item is kept only when it lies
+    /// *entirely* inside the surviving rectangle
+    /// `[left·W, (1-right)·W] × [top·H, (1-bottom)·H]` (top-left origin).
+    /// `None` (default) keeps the whole page. Applied after OCR merge, so it
+    /// also drops OCR-sourced text outside the region.
+    pub crop_box: Option<CropBox>,
+    /// Drop diagonal (skewed) text — items whose rotation is more than 2°
+    /// off the nearest right angle (0/90/180/270). Default `false`. Matches
+    /// the host worker's `skip_diagonal_text` behaviour so watermarks and
+    /// rotated stamps can be excluded from the fast-tier output.
+    pub skip_diagonal_text: bool,
+}
+
+/// A page sub-region expressed as the fraction cropped from each side.
+/// All fields are in `[0, 1]`; `left + right < 1` and `top + bottom < 1`
+/// for a non-empty region. Origin is top-left, matching `TextItem` coordinates.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct CropBox {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
 }
 
 /// Image handling for the markdown emitter.
@@ -121,6 +145,8 @@ impl Default for LiteParseConfig {
             ocr_failure_fatal: true,
             ocr_hedge_delays_ms: Vec::new(),
             emit_word_boxes: false,
+            crop_box: None,
+            skip_diagonal_text: false,
         }
     }
 }

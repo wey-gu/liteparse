@@ -62,6 +62,27 @@ export interface JsLiteParseConfig {
    * for word-level bbox attribution.
    */
   emitWordBoxes?: boolean
+  /**
+   * Restrict output to a page sub-region. Each field is the fraction of the
+   * page cropped from that side; a text item survives only if it lies
+   * entirely inside the remaining rectangle. Unset keeps the whole page.
+   */
+  cropBox?: JsCropBox
+  /**
+   * Drop diagonal text (rotation >2° off the nearest right angle). Default
+   * false. Use to exclude rotated watermarks/stamps from the output.
+   */
+  skipDiagonalText?: boolean
+}
+/**
+ * A page sub-region as the fraction cropped from each side (top-left origin,
+ * each in `[0, 1]`).
+ */
+export interface JsCropBox {
+  top: number
+  right: number
+  bottom: number
+  left: number
 }
 /** One word's sub-box within a `JsTextItem`, in the same viewport space. */
 export interface JsWordBox {

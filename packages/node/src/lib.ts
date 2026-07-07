@@ -57,6 +57,31 @@ export interface LiteParseConfig {
    * marshalling), so enable only when doing word-level bbox attribution.
    */
   emitWordBoxes: boolean;
+  /**
+   * Restrict output to a page sub-region. Each field is the fraction of the
+   * page cropped away from that side (top-left origin), so `{ left: 0.5 }`
+   * discards the left half. A text item survives only when it lies entirely
+   * inside the remaining rectangle. Undefined (default) keeps the whole page.
+   * Applied after OCR merge, so OCR text outside the region is dropped too.
+   */
+  cropBox?: CropBox;
+  /**
+   * Drop diagonal text — items whose rotation is more than 2° off the nearest
+   * right angle (0/90/180/270). Default false. Use to exclude rotated
+   * watermarks/stamps from the output.
+   */
+  skipDiagonalText: boolean;
+}
+
+/**
+ * A page sub-region expressed as the fraction cropped from each side
+ * (top-left origin, each value in `[0, 1]`).
+ */
+export interface CropBox {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
 }
 
 /**
@@ -226,6 +251,8 @@ export class LiteParse {
       ocrFailureFatal: userConfig.ocrFailureFatal,
       ocrHedgeDelaysMs: userConfig.ocrHedgeDelaysMs,
       emitWordBoxes: userConfig.emitWordBoxes,
+      cropBox: userConfig.cropBox,
+      skipDiagonalText: userConfig.skipDiagonalText,
     };
 
     this._native = new native.LiteParse(nativeConfig);
@@ -251,6 +278,8 @@ export class LiteParse {
       ocrFailureFatal: resolved.ocrFailureFatal ?? true,
       ocrHedgeDelaysMs: resolved.ocrHedgeDelaysMs ?? [],
       emitWordBoxes: resolved.emitWordBoxes ?? false,
+      cropBox: resolved.cropBox ?? undefined,
+      skipDiagonalText: resolved.skipDiagonalText ?? false,
     };
   }
 

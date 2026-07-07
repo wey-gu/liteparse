@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use napi_derive::napi;
 
-use liteparse::config::{ImageMode, LiteParseConfig, OutputFormat};
+use liteparse::config::{CropBox, ImageMode, LiteParseConfig, OutputFormat};
 use liteparse::parser::ParseResult;
 use liteparse::types::{GraphicPrimitive, Page, ParsedPage, Rect, TextItem, WordBox};
 
@@ -59,6 +59,24 @@ pub struct JsLiteParseConfig {
     /// false. Word boxes roughly double the text-item payload, so enable only
     /// for word-level bbox attribution.
     pub emit_word_boxes: Option<bool>,
+    /// Restrict output to a page sub-region. Each field is the fraction of the
+    /// page cropped from that side; a text item survives only if it lies
+    /// entirely inside the remaining rectangle. Unset keeps the whole page.
+    pub crop_box: Option<JsCropBox>,
+    /// Drop diagonal text (rotation >2° off the nearest right angle). Default
+    /// false. Use to exclude rotated watermarks/stamps from the output.
+    pub skip_diagonal_text: Option<bool>,
+}
+
+/// A page sub-region as the fraction cropped from each side (top-left origin,
+/// each in `[0, 1]`).
+#[napi(object)]
+#[derive(Clone)]
+pub struct JsCropBox {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
 }
 
 impl JsLiteParseConfig {
@@ -126,6 +144,17 @@ impl JsLiteParseConfig {
         if let Some(v) = self.emit_word_boxes {
             cfg.emit_word_boxes = v;
         }
+        if let Some(v) = self.crop_box {
+            cfg.crop_box = Some(CropBox {
+                top: v.top as f32,
+                right: v.right as f32,
+                bottom: v.bottom as f32,
+                left: v.left as f32,
+            });
+        }
+        if let Some(v) = self.skip_diagonal_text {
+            cfg.skip_diagonal_text = v;
+        }
         cfg
     }
 
@@ -166,6 +195,13 @@ impl JsLiteParseConfig {
                     .collect(),
             ),
             emit_word_boxes: Some(cfg.emit_word_boxes),
+            crop_box: cfg.crop_box.map(|c| JsCropBox {
+                top: c.top as f64,
+                right: c.right as f64,
+                bottom: c.bottom as f64,
+                left: c.left as f64,
+            }),
+            skip_diagonal_text: Some(cfg.skip_diagonal_text),
         }
     }
 }

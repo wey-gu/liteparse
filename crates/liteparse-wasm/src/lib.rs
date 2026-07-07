@@ -16,7 +16,9 @@ use tsify_next::Tsify;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use liteparse::config::{ImageMode, LiteParseConfig as CoreConfig, OutputFormat};
+use liteparse::config::{
+    CropBox as CoreCropBox, ImageMode, LiteParseConfig as CoreConfig, OutputFormat,
+};
 use liteparse::ocr::{OcrEngine, OcrOptions, OcrResult as CoreOcrResult};
 use liteparse::parser::LiteParse as CoreLiteParse;
 use liteparse::search;
@@ -59,6 +61,25 @@ pub struct LiteParseConfig {
     password: Option<String>,
     quiet: Option<bool>,
     emit_word_boxes: Option<bool>,
+    /// Restrict output to a page sub-region. Each field is the fraction of the
+    /// page cropped from that side; a text item survives only if it lies
+    /// entirely inside the remaining rectangle. Unset keeps the whole page.
+    crop_box: Option<CropBox>,
+    /// Drop diagonal text (rotation >2° off the nearest right angle). Default
+    /// false. Use to exclude rotated watermarks/stamps from the output.
+    skip_diagonal_text: Option<bool>,
+}
+
+/// A page sub-region as the fraction cropped from each side (top-left origin,
+/// each in `[0, 1]`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Tsify)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CropBox {
+    top: f32,
+    right: f32,
+    bottom: f32,
+    left: f32,
 }
 
 impl LiteParseConfig {
@@ -129,6 +150,17 @@ impl LiteParseConfig {
         if let Some(v) = self.emit_word_boxes {
             cfg.emit_word_boxes = v;
         }
+        if let Some(v) = self.crop_box {
+            cfg.crop_box = Some(CoreCropBox {
+                top: v.top,
+                right: v.right,
+                bottom: v.bottom,
+                left: v.left,
+            });
+        }
+        if let Some(v) = self.skip_diagonal_text {
+            cfg.skip_diagonal_text = v;
+        }
         cfg.num_workers = 1;
         Ok(cfg)
     }
@@ -164,6 +196,13 @@ impl LiteParseConfig {
             password: cfg.password.clone(),
             quiet: Some(cfg.quiet),
             emit_word_boxes: Some(cfg.emit_word_boxes),
+            crop_box: cfg.crop_box.map(|c| CropBox {
+                top: c.top,
+                right: c.right,
+                bottom: c.bottom,
+                left: c.left,
+            }),
+            skip_diagonal_text: Some(cfg.skip_diagonal_text),
         }
     }
 }

@@ -349,6 +349,15 @@ impl LiteParse {
             t_ocr.duration_since(t1).as_secs_f64() * 1000.0
         ));
 
+        // Caller-requested content filters (page-region crop, diagonal-text
+        // removal). Runs after OCR merge so it also drops OCR text outside the
+        // crop region, and before projection so filtered items never surface.
+        extract::apply_content_filters(
+            &mut pages,
+            self.config.crop_box.as_ref(),
+            self.config.skip_diagonal_text,
+        );
+
         // Grid projection
         let mut parsed_pages = projection::project_pages_to_grid(pages);
         let t2 = web_time::Instant::now();

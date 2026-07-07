@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use liteparse::config::{ImageMode, LiteParseConfig, OutputFormat};
+use liteparse::config::{CropBox, ImageMode, LiteParseConfig, OutputFormat};
 use liteparse::types::PdfInput;
 
 mod cli;
@@ -456,6 +456,8 @@ impl LiteParse {
         ocr_failure_fatal = None,
         ocr_hedge_delays_ms = None,
         emit_word_boxes = None,
+        crop_box = None,
+        skip_diagonal_text = None,
     ))]
     fn new(
         ocr_language: Option<String>,
@@ -476,6 +478,8 @@ impl LiteParse {
         ocr_failure_fatal: Option<bool>,
         ocr_hedge_delays_ms: Option<Vec<u64>>,
         emit_word_boxes: Option<bool>,
+        crop_box: Option<(f32, f32, f32, f32)>,
+        skip_diagonal_text: Option<bool>,
     ) -> PyResult<Self> {
         let mut cfg = LiteParseConfig::default();
         if let Some(v) = ocr_language {
@@ -539,6 +543,17 @@ impl LiteParse {
         }
         if let Some(v) = emit_word_boxes {
             cfg.emit_word_boxes = v;
+        }
+        if let Some((top, right, bottom, left)) = crop_box {
+            cfg.crop_box = Some(CropBox {
+                top,
+                right,
+                bottom,
+                left,
+            });
+        }
+        if let Some(v) = skip_diagonal_text {
+            cfg.skip_diagonal_text = v;
         }
 
         let inner = liteparse::parser::LiteParse::new(cfg.clone());
