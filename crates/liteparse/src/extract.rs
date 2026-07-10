@@ -594,6 +594,11 @@ fn extract_page_text_items(
         } else {
             glyph_decoder.decode(&ch, unicode)
         };
+        // A glyph the decoder recovered (glyph-name / reverse-cmap / outline-hash
+        // resolver) carries correct text even though PDFium still reports a
+        // /ToUnicode map error for its raw char code. Don't count these toward the
+        // item's unmapped-char tally.
+        let recovered = decoded.is_some();
 
         // Skip null / invalid sentinels (unless the glyph name recovered them)
         if decoded.is_none() && (unicode == 0 || unicode == 0xFFFE || unicode == 0xFFFF) {
@@ -770,13 +775,13 @@ fn extract_page_text_items(
             }
             if !y_overlap || line_changed || gap >= MAX_INLINE_GAP || dot_leader_break {
                 seg.flush(&mut items);
-                seg.start(c, &vp_loose, &vp_strict, &ch, page_rotation);
+                seg.start(c, &vp_loose, &vp_strict, &ch, recovered, page_rotation);
                 seg.append_ligature_tail(ligature_tail);
             } else if seg.pending_space {
                 let avg_cw = seg.avg_char_width();
                 if gap > avg_cw * 2.2 {
                     seg.flush(&mut items);
-                    seg.start(c, &vp_loose, &vp_strict, &ch, page_rotation);
+                    seg.start(c, &vp_loose, &vp_strict, &ch, recovered, page_rotation);
                     seg.append_ligature_tail(ligature_tail);
                 } else {
                     // Genuine inline space PDFium emitted: sample its size
@@ -800,7 +805,7 @@ fn extract_page_text_items(
                         }
                     }
                     seg.commit_pending_space();
-                    seg.push_char(c, &vp_loose, &vp_strict, &ch);
+                    seg.push_char(c, &vp_loose, &vp_strict, &ch, recovered);
                     seg.append_ligature_tail(ligature_tail);
                 }
             } else {
@@ -843,11 +848,11 @@ fn extract_page_text_items(
                     seg.text.push(' ');
                     seg.break_word();
                 }
-                seg.push_char(c, &vp_loose, &vp_strict, &ch);
+                seg.push_char(c, &vp_loose, &vp_strict, &ch, recovered);
                 seg.append_ligature_tail(ligature_tail);
             }
         } else {
-            seg.start(c, &vp_loose, &vp_strict, &ch, page_rotation);
+            seg.start(c, &vp_loose, &vp_strict, &ch, recovered, page_rotation);
             seg.append_ligature_tail(ligature_tail);
         }
     }
@@ -1444,6 +1449,13 @@ fn detect_garbage_unicode_fonts(
         .collect()
 }
 
+/// Whether a just-decoded glyph should count toward its item's unmapped-char
+/// tally (which sets `TextItem::has_unicode_map_error` by majority vote in
+/// `flush`).
+fn counts_as_unmapped(recovered: bool, raw_map_error: bool) -> bool {
+    !recovered && raw_map_error
+}
+
 /// Accumulates characters into a single TextItem segment.
 struct SegmentBuilder {
     text: String,
@@ -1600,6 +1612,7 @@ impl SegmentBuilder {
         vp_loose: &RectF,
         vp_strict: &RectF,
         ch: &pdfium::TextChar,
+        recovered: bool,
         page_rotation: i32,
     ) {
         self.text.clear();
@@ -1612,7 +1625,11 @@ impl SegmentBuilder {
         self.last_char_loose_right = vp_loose.right;
         self.last_char_bottom = vp_strict.bottom;
         self.char_count = 1;
-        self.unmapped_char_count = if ch.has_unicode_map_error() { 1 } else { 0 };
+        self.unmapped_char_count = if counts_as_unmapped(recovered, ch.has_unicode_map_error()) {
+            1
+        } else {
+            0
+        };
         self.has_content = true;
         self.pending_space = false;
         self.words.clear();
@@ -1700,7 +1717,14 @@ impl SegmentBuilder {
     }
 
     /// Add a visible character to the current segment.
-    fn push_char(&mut self, c: char, vp_loose: &RectF, vp_strict: &RectF, ch: &pdfium::TextChar) {
+    fn push_char(
+        &mut self,
+        c: char,
+        vp_loose: &RectF,
+        vp_strict: &RectF,
+        ch: &pdfium::TextChar,
+        recovered: bool,
+    ) {
         self.text.push(c);
         self.add_word_char(c, vp_loose);
         self.vp_left = self.vp_left.min(vp_loose.left);
@@ -1711,7 +1735,7 @@ impl SegmentBuilder {
         self.last_char_loose_right = vp_loose.right;
         self.last_char_bottom = vp_strict.bottom;
         self.char_count += 1;
-        if ch.has_unicode_map_error() {
+        if counts_as_unmapped(recovered, ch.has_unicode_map_error()) {
             self.unmapped_char_count += 1;
         }
 
@@ -1825,6 +1849,29 @@ impl SegmentBuilder {
 mod tests {
     use super::*;
     use std::f32::consts::PI;
+
+    // A glyph PDFium flags with a raw /ToUnicode map error normally counts
+    // toward the item's unmapped tally...
+    #[test]
+    fn unrecovered_map_error_counts_as_unmapped() {
+        assert!(counts_as_unmapped(false, true));
+    }
+
+    // ...but once the decoder recovers it (glyph-name / reverse-cmap /
+    // outline-hash resolver) the text is correct, so it must NOT count — this
+    // is the fix that stops the OCR merge from discarding fully-recovered
+    // buggy-font items as "unusable native".
+    #[test]
+    fn recovered_map_error_does_not_count_as_unmapped() {
+        assert!(!counts_as_unmapped(true, true));
+    }
+
+    // A cleanly-mapped glyph never counts, recovered or not.
+    #[test]
+    fn cleanly_mapped_glyph_never_counts_as_unmapped() {
+        assert!(!counts_as_unmapped(false, false));
+        assert!(!counts_as_unmapped(true, false));
+    }
 
     fn strike_item() -> TextItem {
         TextItem {

@@ -1,6 +1,6 @@
 [package]
 name = "liteparse"
-version = "2.5.0"
+version = "2.5.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -15,8 +15,13 @@ name = "lit"
 path = "src/main.rs"
 
 [features]
-default = ["tesseract"]
+default = ["tesseract", "static-embed"]
 tesseract = ["dep:tesseract-rs"]
+# The model2vec static-embedding engine for schema extraction (EXTRACT_PLAN.md
+# Phase 2). Default-on for native builds; binding crates (wasm/napi/python) use
+# `default-features = false` and opt in when their extract surface lands.
+# BM25-only extraction stays available without this feature.
+static-embed = ["dep:tokenizers", "dep:safetensors"]
 
 [dependencies]
 blake3 = "1"
@@ -35,6 +40,10 @@ tesseract-rs = { version = "0.2", features = ["build-tesseract"], optional = tru
 tokio = { version = "1.52.3", features = ["rt", "macros", "sync", "time", "io-util"] }
 url = "2"
 web-time = "1.1.0"
+safetensors = { version = "0.6", optional = true }
+# default-features off drops the `onig` C regex backend (and hub/http extras);
+# `fancy-regex` is the pure-Rust backend, keeping the build C-free.
+tokenizers = { version = "0.23.1", default-features = false, features = ["fancy-regex"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rmp = "0.8"
